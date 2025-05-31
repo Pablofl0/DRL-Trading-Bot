@@ -424,8 +424,8 @@ class LiveTrader:
 
 if __name__ == "__main__":
     # Configuration
-    API_KEY = "F9NT4xEgm4NBLXljYuWO7TJPZxkQSyZe8L4m0pCYOksxAfwtcV2jSH1NFiPzR2St"  # Insert your Binance API key
-    API_SECRET = "3tAjZHrzYgLurUGg72Ly8CcrFTNxi0rWkcDjHaTgDqIEJF4EVKpJCEmpzSPhc5AO"  # Insert your Binance API secret
+    API_KEY = ""  # Insert your Binance API key
+    API_SECRET = ""  # Insert your Binance API secret
     TEST_MODE = True  # Set to False for real trading
     
     # Create and run trader
