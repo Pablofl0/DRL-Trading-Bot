@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import date
 
 # Add current directory to the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -8,6 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.train import train_agent
 
 if __name__ == "__main__":
+    from src.utils.data_processor import DataProcessor
+    data_ranges = DataProcessor.get_train_test_date_ranges_last_2y()
     # Parse command line arguments if any
     import argparse
     
@@ -16,9 +19,9 @@ if __name__ == "__main__":
                         help='Trading pair symbol (default: BTCUSDT)')
     parser.add_argument('--interval', type=str, default='1h',
                         help='Timeframe interval (default: 1h)')
-    parser.add_argument('--start-date', type=str, default='2023-05-29',
+    parser.add_argument('--start-date', type=str, default='2023-01-01',
                         help='Start date for training data (default: 2024-04-01)')
-    parser.add_argument('--end-date', type=str, default='2025-05-12',
+    parser.add_argument('--end-date', type=str, default=date.today().strftime('%Y-%m-%d'),
                         help='End date for training data (default: 2021-07-20)')
     parser.add_argument('--episodes', type=int, default=3000,
                         help='Number of training episodes (default: 4000 as in the paper)')
@@ -51,7 +54,7 @@ if __name__ == "__main__":
     
     # If fast_train is enabled, use fewer episodes
     if args.fast_train:
-        episodes = 100
+        episodes = 2
         print("⚠️ FAST TRAINING MODE ENABLED - using only 100 episodes for testing ⚠️")
 
     else:

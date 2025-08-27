@@ -1,5 +1,8 @@
+import os
+import re
 import pandas as pd
 import numpy as np
+from datetime import datetime, timedelta
 from ta.volatility import AverageTrueRange
 from ta.momentum import RSIIndicator
 from sklearn.preprocessing import MinMaxScaler
@@ -319,3 +322,56 @@ class DataProcessor:
         plt.tight_layout()
         plt.savefig('technical_indicators.png')
         plt.close() 
+
+
+
+    def get_train_test_date_ranges_last_2y(train_ratio=0.8):
+        """
+        Devuelve fechas de inicio y fin para entrenamiento y evaluación
+        basadas en los últimos 2 años desde hoy, divididas por train_ratio.
+
+        Parámetros:
+        -----------
+        train_ratio : float
+            Proporción de los datos asignados a entrenamiento (por defecto 0.8)
+
+        Retorna:
+        --------
+        dict con claves:
+            - train_start
+            - train_end
+            - test_start
+            - test_end
+        """
+        today = datetime.today()
+        two_years_ago = today - timedelta(days=730)
+
+        total_days = (today - two_years_ago).days
+        train_days = int(total_days * train_ratio)
+
+        train_start = two_years_ago
+        train_end = train_start + timedelta(days=train_days - 1)
+        test_start = train_end + timedelta(days=1)
+        test_end = today
+
+        return {
+            "train_start": train_start.strftime("%Y-%m-%d"),
+            "train_end": train_end.strftime("%Y-%m-%d"),
+            "test_start": test_start.strftime("%Y-%m-%d"),
+            "test_end": test_end.strftime("%Y-%m-%d")
+        }
+
+    
+
+    def get_last_episode_from_results(folder="results", symbol='BTCUSDT', prefix="_training_metrics_ep"):
+        max_ep = 0
+        final_prefix = symbol + prefix
+        pattern = re.compile(rf"{re.escape(final_prefix)}(\d+)\.csv")
+
+        for filename in os.listdir(folder):
+            match = pattern.match(filename)
+            if match:
+                ep = int(match.group(1))
+                max_ep = max(max_ep, ep)
+
+        return max_ep

@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.backtest import Backtester
 
 if __name__ == "__main__":
+    from src.utils.data_processor import DataProcessor
+    data_ranges = DataProcessor.get_train_test_date_ranges_last_2y()
     # Parse command line arguments
     import argparse
     
@@ -16,9 +18,9 @@ if __name__ == "__main__":
                         help='Trading pair symbol (default: BTCUSDT)')
     parser.add_argument('--interval', type=str, default='1h',
                         help='Timeframe interval (default: 1h)')
-    parser.add_argument('--start-date', type=str, default='2024-12-12',
+    parser.add_argument('--start-date', type=str, default=data_ranges["test_start"],
                         help='Start date for backtesting (default: 2023-01-01)')
-    parser.add_argument('--end-date', type=str, default='2025-05-12',
+    parser.add_argument('--end-date', type=str, default=data_ranges["test_end"],
                         help='End date for backtesting (default: 2024-01-01)')
     parser.add_argument('--lookback-window', type=int, default=100,
                         help='Lookback window size for observations (default: 100)')
@@ -26,7 +28,7 @@ if __name__ == "__main__":
                         help='Initial balance for backtesting (default: 10000)')
     parser.add_argument('--commission', type=float, default=0.001,
                         help='Trading commission rate (default: 0.001 or 0.1%)')
-    parser.add_argument('--model-path', type=str, default='best_model',
+    parser.add_argument('--model-path', type=str, default='models',
                         help='Path to saved model files (default: models)')
     parser.add_argument('--output-dir', type=str, default='results',
                         help='Output directory for reports (default: results)')

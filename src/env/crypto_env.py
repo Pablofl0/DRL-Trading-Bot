@@ -41,29 +41,43 @@ class CryptoTradingEnv(gym.Env):
         # Initialize state
         self.reset()
         
-    def reset(self):
-        # Reset step
-        self.current_step = self.lookback_window_size
-        
+    def reset(self, trajectory_size=1000):
+        """
+        Reset the environment and start a new episode with a random window.
+        Ensures there are enough steps for the trajectory.
+        """
+        # Compute the valid range for starting index
+        min_step = self.lookback_window_size
+        max_step = len(self.df) - trajectory_size
+        if max_step <= min_step:
+            raise ValueError("Trajectory size too large for dataset length.")
+
+        # Choose a random starting point within the valid range
+        self.current_step = np.random.randint(min_step, max_step)
+
         # Reset balance, holdings, net worth
         self.balance = self.initial_balance
         self.crypto_held = 0
         self.net_worth = self.initial_balance
         self.prev_net_worth = self.initial_balance
-        
+
         # Reset history and metrics
         self.trades = []
         self.net_worth_history = [self.initial_balance]
         self.balance_history = [self.initial_balance]
         self.crypto_held_history = [0]
         self.returns_history = [0]
-        
+
         # Track positions for visualization
-        self.position = 0  # 0: no position, 1: long position
+        self.position = 0
         self.positions_history = [0]
-        
-        # Get first observation
+
+        # Store trajectory size for later use
+        self.trajectory_size = trajectory_size
+
+        # Return the first observation
         return self._next_observation()
+
     
     def _next_observation(self):
         """
