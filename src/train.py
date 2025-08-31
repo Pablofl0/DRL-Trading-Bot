@@ -170,7 +170,7 @@ def train_agent(
         use_lr_schedule=use_lr_schedule
     )
 
-    start_episode = DataProcessor.get_last_episode_from_results() + 1
+    #start_episode = DataProcessor.get_last_episode_from_results() + 1
     # Check if we're resuming from a checkpoint
     if start_episode > 0:
         try:
@@ -350,7 +350,7 @@ def train_agent(
     
     # Create an exception handling wrapper for the training loop
     try:
-        for episode in range(0, episodes):
+        for episode in range(start_episode, episodes):
             episode_start_time = datetime.now()
             print(f"Episode {episode+1}/{episodes}")
             
@@ -499,7 +499,7 @@ def train_agent(
             if (episode + 1) % save_freq == 0:
                 print(f"Saving metrics at episode {episode+1}...")
                 # Save training metrics
-                save_training_metrics(train_history, symbol, start_episode+episode)
+                save_training_metrics(train_history, symbol, episode+1)
                 
                 # Plot and save training metrics
                 plot_training_results(train_history, symbol)
@@ -541,7 +541,7 @@ def train_agent(
                 f'models/{symbol}_actor_latest.keras',
                 f'models/{symbol}_critic_latest.keras'
             )
-            save_training_metrics(train_history, symbol, DataProcessor.get_last_episode_from_results()+episode)
+            save_training_metrics(train_history, symbol, episode)
             print("Emergency save completed. You can resume from this episode.")
         except Exception as save_error:
             print(f"Could not complete emergency save: {save_error}")
@@ -556,7 +556,7 @@ def train_agent(
     )
     
     # Save final training metrics
-    save_training_metrics(train_history, symbol, DataProcessor.get_last_episode_from_results())
+    save_training_metrics(train_history, symbol, episodes)
     
     # Plot final results
     plot_training_results(train_history, symbol)

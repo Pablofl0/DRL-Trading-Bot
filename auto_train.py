@@ -4,7 +4,7 @@ import time
 import subprocess
 import glob
 import re
-from datetime import datetime
+from datetime import datetime, date
 
 def get_latest_episode():
     """Find the latest episode number from model files or checkpoint files"""
@@ -29,8 +29,8 @@ def main():
     # Configuration parameters (could be moved to command line arguments)
     symbol = 'BTCUSDT'
     interval = '1h'
-    start_date = '2023-05-29'
-    end_date = '2025-05-12'
+    start_date = '2023-01-01'
+    end_date = date.today().strftime('%Y-%m-%d')
     episodes = 3000
     save_freq = 1  
     max_restarts = 20
