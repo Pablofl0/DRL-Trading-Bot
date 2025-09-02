@@ -67,25 +67,28 @@ class PPOAgent:
         self.actor = self.model.get_actor(self._active_asset)
         self.critic = self.model.get_critic(self._active_asset)
         
-        # Optimizadores
-        if use_lr_schedule:
-            actor_lr_schedule = ExponentialDecay(
-                initial_learning_rate=learning_rate,
-                decay_steps=10000,
-                decay_rate=0.95,
-                staircase=True
-            )
-            critic_lr_schedule = PiecewiseConstantDecay(
-                boundaries=[5000, 15000, 30000],
-                values=[learning_rate * 3.0, learning_rate * 2.0, learning_rate * 1.0, learning_rate * 0.5]
-            )
-            self.actor_optimizer = Adam(learning_rate=actor_lr_schedule)
-            self.critic_optimizer = Adam(learning_rate=critic_lr_schedule)
-            self.actor_lr_schedule = actor_lr_schedule
-            self.critic_lr_schedule = critic_lr_schedule
-        else:
-            self.actor_optimizer = Adam(learning_rate=0.0003)
-            self.critic_optimizer = Adam(learning_rate=0.0005)
+        # Diccionarios de optimizadores por activo
+        self.actor_optimizers = {}
+        self.critic_optimizers = {}
+
+        for asset in self.assets:
+            if use_lr_schedule:
+                actor_lr_schedule = ExponentialDecay(
+                    initial_learning_rate=learning_rate,
+                    decay_steps=10000,
+                    decay_rate=0.95,
+                    staircase=True
+                )
+                critic_lr_schedule = PiecewiseConstantDecay(
+                    boundaries=[5000, 15000, 30000],
+                    values=[learning_rate * 3.0, learning_rate * 2.0, learning_rate * 1.0, learning_rate * 0.5]
+                )
+                self.actor_optimizers[asset] = Adam(learning_rate=actor_lr_schedule)
+                self.critic_optimizers[asset] = Adam(learning_rate=critic_lr_schedule)
+            else:
+                self.actor_optimizers[asset] = Adam(learning_rate=0.0003)
+                self.critic_optimizers[asset] = Adam(learning_rate=0.0005)
+
 
         # Inicializar memoria
         self.clear_memory()
@@ -165,11 +168,17 @@ class PPOAgent:
             critic_lr = self.critic_optimizer.learning_rate
         return {"actor_lr": float(actor_lr), "critic_lr": float(critic_lr)}
 
-    # ---------- Entrenamiento ----------
-    def train(self, batch_size=32, epochs=5):
+    # ---------- Entrenamiento multi-activo ----------
+    def train(self, batch_size=32, epochs=5, asset=None):
+        """
+        Entrena el agente PPO usando memoria acumulada.
+        Si asset=None, se entrenan todos los activos (multi-head).
+        """
+        # Si no hay suficientes pasos almacenados, retornar vacíos
         if len(self.states) < batch_size:
             return {'actor_loss': [], 'critic_loss': [], 'total_loss': [], 'kl_div': []}
-        
+
+        # Convertir memoria a arrays numpy
         states = np.array(self.states, dtype=np.float32)
         actions = np.array(self.actions)
         rewards = np.array(self.rewards, dtype=np.float32)
@@ -177,22 +186,35 @@ class PPOAgent:
         dones = np.array(self.dones)
         old_action_probs = np.array(self.action_probs, dtype=np.float32)
         assets_mem = np.array(self.assets_memory)
-        
+
         history = {'actor_loss': [], 'critic_loss': [], 'total_loss': [], 'kl_div': []}
 
-        for asset in self.assets:
+        # Lista de activos a entrenar
+        assets_to_train = [asset] if asset else self.assets
+
+        for asset in assets_to_train:
+            # Seleccionar los indices de la memoria correspondientes al asset
             idxs = np.where(assets_mem == asset)[0]
             if idxs.size == 0:
                 continue
 
             s, a, r, ns, d, oap = states[idxs], actions[idxs], rewards[idxs], next_states[idxs], dones[idxs], old_action_probs[idxs]
 
-            values = self.get_critic(asset).predict(s, verbose=0).flatten()
-            next_values = self.get_critic(asset).predict(ns, verbose=0).flatten()
-            
+            # Establecer cabeza activa
+            self.set_active_asset(asset)
+
+            actor = self.get_actor(asset)
+            critic = self.get_critic(asset)
+            actor_opt = self.actor_optimizers[asset]
+            critic_opt = self.critic_optimizers[asset]
+
+            # Calcular valores y ventajas
+            values = critic.predict(s, verbose=0).flatten()
+            next_values = critic.predict(ns, verbose=0).flatten()
             advantages, returns = self._compute_advantage(r, values, next_values, d)
             actions_one_hot = tf.one_hot(a, self.action_space)
 
+            # Entrenamiento por epochs
             for epoch in range(epochs):
                 indices = np.arange(len(s))
                 np.random.shuffle(indices)
@@ -200,56 +222,63 @@ class PPOAgent:
 
                 for start_idx in range(0, len(indices), batch_size):
                     end_idx = min(start_idx + batch_size, len(indices))
-                    batch_indices = indices[start_idx:end_idx]
+                    batch_idx = indices[start_idx:end_idx]
 
-                    batch_states = tf.convert_to_tensor(s[batch_indices], dtype=tf.float32)
-                    batch_actions_one_hot = tf.gather(actions_one_hot, batch_indices)
-                    batch_advantages = tf.convert_to_tensor(advantages[batch_indices], dtype=tf.float32)
-                    batch_returns = tf.convert_to_tensor(returns[batch_indices], dtype=tf.float32)
-                    batch_old_probs = tf.convert_to_tensor(oap[batch_indices], dtype=tf.float32)
+                    batch_states = tf.convert_to_tensor(s[batch_idx], dtype=tf.float32)
+                    batch_actions = tf.gather(actions_one_hot, batch_idx)
+                    batch_adv = tf.convert_to_tensor(advantages[batch_idx], dtype=tf.float32)
+                    batch_ret = tf.convert_to_tensor(returns[batch_idx], dtype=tf.float32)
+                    batch_old_probs = tf.convert_to_tensor(oap[batch_idx], dtype=tf.float32)
 
-                    actor = self.get_actor(asset)
-                    critic = self.get_critic(asset)
-
-                    # Actor training
+                    # -------- Actor --------
                     with tf.GradientTape() as tape:
                         current_probs = actor(batch_states, training=True)
                         kl_div = self._calculate_kl_divergence(batch_old_probs, current_probs)
                         epoch_kl_divs.append(float(kl_div))
-                        ratio = tf.reduce_sum(current_probs * batch_actions_one_hot, axis=1) / \
-                                (tf.reduce_sum(batch_old_probs * batch_actions_one_hot, axis=1) + 1e-8)
+
+                        ratio = tf.reduce_sum(current_probs * batch_actions, axis=1) / \
+                                (tf.reduce_sum(batch_old_probs * batch_actions, axis=1) + 1e-8)
+
                         if self.adaptive_epsilon and len(epoch_kl_divs) > 0:
                             self.epsilon = self._adjust_epsilon(kl_div)
-                        surrogate1 = ratio * batch_advantages
-                        surrogate2 = tf.clip_by_value(ratio, 1 - self.epsilon, 1 + self.epsilon) * batch_advantages
+
+                        surrogate1 = ratio * batch_adv
+                        surrogate2 = tf.clip_by_value(ratio, 1 - self.epsilon, 1 + self.epsilon) * batch_adv
                         actor_loss = -tf.reduce_mean(tf.minimum(surrogate1, surrogate2))
+
                         entropy = -tf.reduce_mean(tf.reduce_sum(current_probs * tf.math.log(current_probs + 1e-8), axis=1))
                         actor_loss -= self.entropy_coef * entropy
 
-                    actor_gradients = tape.gradient(actor_loss, actor.trainable_variables)
-                    self.actor_optimizer.apply_gradients(zip(actor_gradients, actor.trainable_variables))
+                    actor_grads = tape.gradient(actor_loss, actor.trainable_variables)
+                    actor_opt.apply_gradients(zip(actor_grads, actor.trainable_variables))
 
-                    # Critic training
-                    with tf.GradientTape() as tape:
+                    # -------- Critic --------
+                    with tf.GradientTape() as tape_c:
                         value_pred = tf.reshape(critic(batch_states, training=True), [-1])
-                        critic_loss = self.value_coef * tf.reduce_mean(tf.square(batch_returns - value_pred))
-                    critic_gradients = tape.gradient(critic_loss, critic.trainable_variables)
-                    self.critic_optimizer.apply_gradients(zip(critic_gradients, critic.trainable_variables))
+                        critic_loss = self.value_coef * tf.reduce_mean(tf.square(batch_ret - value_pred))
 
+                    critic_grads = tape_c.gradient(critic_loss, critic.trainable_variables)
+                    critic_opt.apply_gradients(zip(critic_grads, critic.trainable_variables))
+
+                    # Guardar métricas
                     history['actor_loss'].append(float(actor_loss))
                     history['critic_loss'].append(float(critic_loss))
                     history['total_loss'].append(float(actor_loss + critic_loss))
                     history['kl_div'].append(float(kl_div))
                     self.training_steps += 1
 
-                avg_kl_div = np.mean(epoch_kl_divs) if epoch_kl_divs else 0
-                current_lr = self.get_learning_rates()
-                print(f"[{asset}] Epoch {epoch+1}/{epochs}, Avg KL: {avg_kl_div:.6f}, "
-                      f"Eps: {self.epsilon:.4f}, Actor LR: {current_lr['actor_lr']:.6f}, "
-                      f"Critic LR: {current_lr['critic_lr']:.6f}")
+                # Logging por epoch
+                avg_kl = np.mean(epoch_kl_divs) if epoch_kl_divs else 0
+                lr_info = self.get_learning_rates()
+                print(f"[{asset}] Epoch {epoch+1}/{epochs}, Avg KL: {avg_kl:.6f}, "
+                    f"Eps: {self.epsilon:.4f}, Actor LR: {lr_info['actor_lr']:.6f}, "
+                    f"Critic LR: {lr_info['critic_lr']:.6f}")
 
+        # Limpiar memoria al final
         self.clear_memory()
+
         return history
+
 
     # ---------- Memoria ----------
     def clear_memory(self):
