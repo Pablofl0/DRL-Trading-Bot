@@ -375,10 +375,7 @@ def train_agent(
             # ---------------- Guardado "best" por activo ----------------
             if episode_reward > best_reward[current_asset]:
                 best_reward[current_asset] = episode_reward
-                agent.save_models(
-                    f'models/{current_asset}_actor_best.keras',
-                    f'models/{current_asset}_critic_best.keras'
-                )
+                agent.save_weights(f"models/{current_asset}_best_weights")
                 print(f"Episode {episode+1}: New best model saved for {current_asset} with reward {episode_reward:.2f}")
             
             # ---------------- Logs de tiempo y métricas ----------------
@@ -406,10 +403,8 @@ def train_agent(
                             print(f"Warning: Could not delete {temp_file}: {e}")
             
             # ---------------- Guardado "latest" por activo ----------------
-            agent.save_models(
-                f'models/{current_asset}_actor_latest.keras',
-                f'models/{current_asset}_critic_latest.keras'
-            )
+            agent.save_weights(f"models/{current_asset}_latest_weights")
+
             
             # ---------------- ETA estimada ----------------
             if episode > start_episode:
@@ -436,10 +431,8 @@ def train_agent(
             # Usa el activo actual si existe, si no el primero
             asset_to_save = locals().get('current_asset', assets[0])
             agent.set_active_asset(asset_to_save)
-            agent.save_models(
-                f'models/{asset_to_save}_actor_latest.keras',
-                f'models/{asset_to_save}_critic_latest.keras'
-            )
+            agent.save_checkpoint(f"models/{asset_to_save}_emergency_checkpoint")
+
             save_training_metrics(train_history[asset_to_save], asset_to_save, locals().get('episode', 0))
             print("Emergency save completed. You can resume from this episode.")
         except Exception as save_error:
@@ -452,10 +445,9 @@ def train_agent(
     print("Training complete. Saving final models and metrics...")
     for sym in assets:
         agent.set_active_asset(sym)
-        agent.save_models(
-            f'models/{sym}_actor_latest.keras',
-            f'models/{sym}_critic_latest.keras'
-        )
+        agent.save_checkpoint(f"models/{sym}_final_checkpoint")
+        agent.save_weights(f"models/{sym}_final_weights")
+
         save_training_metrics(train_history[sym], sym, episodes)
         plot_training_results(train_history[sym], sym)
     
