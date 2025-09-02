@@ -1,0 +1,12 @@
+numpy
+pandas
+matplotlib
+tensorflow
+tqdm
+ta
+scikit-learn
+gym
+binance
+cryptography
+aiohttp
+python-binance
