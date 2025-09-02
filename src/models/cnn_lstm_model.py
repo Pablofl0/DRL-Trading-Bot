@@ -1,138 +1,134 @@
 import tensorflow as tf
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, Conv1D, MaxPooling1D, LSTM, Flatten, Concatenate, Dropout
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.layers import Input, Dense, Conv1D, MaxPooling1D, LSTM, Flatten
+from typing import Dict, List
 
-class CNNLSTM:
-    """CNN-LSTM model for feature extraction and time series forecasting based on the paper architecture"""
+class CNNLSTMMultiHead:
+    """
+    CNN-LSTM con tronco compartido + múltiples cabezas (actor/critic) por activo.
+
+    Uso típico:
+        model = CNNLSTMMultiHead(
+            input_shape=(lookback, n_features),
+            action_space=3,
+            assets=["BTCUSDT","ETHUSDT","SOLUSDT"]
+        )
+
+        actor_btc = model.get_actor("BTCUSDT")
+        critic_eth = model.get_critic("ETHUSDT")
+    """
+
     def __init__(
-        self, 
-        input_shape, 
-        action_space, 
-        learning_rate=0.00025
+        self,
+        input_shape,
+        action_space: int,
+        assets: List[str],
+        learning_rate: float = 2.5e-4
     ):
-        """
-        Initialize the CNN-LSTM model
-        
-        Parameters:
-        -----------
-        input_shape : tuple
-            Shape of the input data (lookback_window, features)
-        action_space : int
-            Number of possible actions
-        learning_rate : float, optional
-            Learning rate for the Adam optimizer
-        """
         self.input_shape = input_shape
         self.action_space = action_space
         self.learning_rate = learning_rate
-        
-        # Build actor and critic models
-        self.actor = self._build_actor_model()
-        self.critic = self._build_critic_model()
-        
-    def _build_actor_model(self):
-        """Build the actor model using CNN-LSTM architecture from Figure 7"""
-        # Input layer (output shape = 100, 4)
-        inputs = Input(shape=self.input_shape)
-        
-        # Feature Learning section
-        # Conv1D layer (output shape = 100, 32)
+
+        # Diccionarios de modelos por activo
+        self.actor_heads: Dict[str, tf.keras.Model] = {}
+        self.critic_heads: Dict[str, tf.keras.Model] = {}
+
+        # Construir tronco compartido (backbone)
+        self.backbone_input, self.backbone_output = self._build_backbone()
+
+        # Crear heads iniciales
+        for asset in assets:
+            self._build_heads_for(asset)
+
+    # ---------- Backbone compartido ----------
+    def _build_backbone(self):
+        """
+        Devuelve: (inputs, z)
+          - inputs: Input(shape=self.input_shape)
+          - z: embedding compartido (tensor)
+        """
+        inputs = Input(shape=self.input_shape, name="backbone_input")
+
         x = Conv1D(
-            filters=32,
-            kernel_size=3,
-            padding='same',
-            activation='relu',
-            name='actor_conv_1'
+            filters=32, kernel_size=3, padding="same",
+            activation="relu", name="shared_conv1d"
         )(inputs)
-        
-        # MaxPooling1D layer (output shape = 50, 32)
-        x = MaxPooling1D(pool_size=2, name='actor_pool_1')(x)
-        
-        # Sequence Learning section
-        # LSTM layers (output shape = None, 32)
+
+        x = MaxPooling1D(pool_size=2, name="shared_maxpool")(x)
+
         x = LSTM(
-            units=32,
-            return_sequences=False,
-            name='actor_lstm_1'
+            units=32, return_sequences=False, name="shared_lstm"
         )(x)
-        
-        # Flatten layer (output shape = None, 32)
-        # Note: Flatten is not strictly needed since LSTM with return_sequences=False already outputs a flat tensor
-        # but including it to match the diagram exactly
-        x = Flatten(name='actor_flatten')(x)
-        
-        # Dense layer (output shape = None, 32)
-        x = Dense(
-            units=32,
-            activation='relu',
-            name='actor_dense_1'
-        )(x)
-        
-        # Output Dense layer (output shape = None, 3)
-        outputs = Dense(
-            units=self.action_space,
-            activation='softmax',
-            name='actor_output'
-        )(x)
-        
-        # Create model
-        model = Model(inputs=inputs, outputs=outputs, name='actor')
-        
-        return model
-    
-    def _build_critic_model(self):
-        """Build the critic model with similar architecture to actor"""
-        # Input layer (output shape = 100, 4)
-        inputs = Input(shape=self.input_shape)
-        
-        # Feature Learning section
-        # Conv1D layer (output shape = 100, 32)
-        x = Conv1D(
-            filters=32,
-            kernel_size=3,
-            padding='same',
-            activation='relu',
-            name='critic_conv_1'
-        )(inputs)
-        
-        # MaxPooling1D layer (output shape = 50, 32)
-        x = MaxPooling1D(pool_size=2, name='critic_pool_1')(x)
-        
-        # Sequence Learning section
-        # LSTM layer (output shape = None, 32)
-        x = LSTM(
-            units=32,
-            return_sequences=False,
-            name='critic_lstm_1'
-        )(x)
-        
-        # Flatten layer (output shape = None, 32)
-        x = Flatten(name='critic_flatten')(x)
-        
-        # Dense layer (output shape = None, 32)
-        x = Dense(
-            units=32,
-            activation='relu',
-            name='critic_dense_1'
-        )(x)
-        
-        # Output Dense layer (output shape = None, 1)
-        outputs = Dense(
-            units=1,
-            activation=None,
-            name='critic_output'
-        )(x)
-        
-        # Create model
-        model = Model(inputs=inputs, outputs=outputs, name='critic')
-        
-        return model
-    
-    def get_actor(self):
-        """Return the actor model"""
-        return self.actor
-    
-    def get_critic(self):
-        """Return the critic model"""
-        return self.critic 
+
+        # Nota: LSTM con return_sequences=False ya es plano, añadimos Dense para compactar
+        z = Dense(32, activation="relu", name="shared_dense")(x)
+
+        return inputs, z
+
+    # ---------- Heads por activo ----------
+    def _build_heads_for(self, asset: str):
+        """
+        Crea (o recrea) las cabezas actor/critic para un activo
+        reutilizando el backbone compartido.
+        """
+        asset = str(asset)
+        # Actor head
+        a = Dense(32, activation="relu", name=f"actor_{asset}_dense")(self.backbone_output)
+        actor_out = Dense(
+            self.action_space, activation="softmax", name=f"actor_{asset}_output"
+        )(a)
+        actor_model = Model(
+            inputs=self.backbone_input, outputs=actor_out, name=f"actor_{asset}"
+        )
+
+        # Critic head
+        c = Dense(32, activation="relu", name=f"critic_{asset}_dense")(self.backbone_output)
+        critic_out = Dense(1, activation=None, name=f"critic_{asset}_output")(c)
+        critic_model = Model(
+            inputs=self.backbone_input, outputs=critic_out, name=f"critic_{asset}"
+        )
+
+        # (Opcional) compilar si usas .fit en algún momento
+        # En PPO normalmente haces entrenamiento manual, así que no es obligatorio.
+        # actor_model.compile(optimizer=tf.keras.optimizers.Adam(self.learning_rate), loss="categorical_crossentropy")
+        # critic_model.compile(optimizer=tf.keras.optimizers.Adam(self.learning_rate), loss="mse")
+
+        self.actor_heads[asset] = actor_model
+        self.critic_heads[asset] = critic_model
+
+    # ---------- API pública ----------
+    def add_asset(self, asset: str):
+        """Añade una nueva cabeza actor/critic para un activo nuevo."""
+        if asset in self.actor_heads:
+            return  # ya existe
+        self._build_heads_for(asset)
+
+    def list_assets(self) -> List[str]:
+        """Lista de activos con cabeza creada."""
+        return sorted(list(self.actor_heads.keys()))
+
+    def get_actor(self, asset: str) -> tf.keras.Model:
+        """Obtiene el actor específico del activo."""
+        if asset not in self.actor_heads:
+            raise KeyError(f"No existe actor para activo '{asset}'. Añádelo con add_asset().")
+        return self.actor_heads[asset]
+
+    def get_critic(self, asset: str) -> tf.keras.Model:
+        """Obtiene el crítico específico del activo."""
+        if asset not in self.critic_heads:
+            raise KeyError(f"No existe critic para activo '{asset}'. Añádelo con add_asset().")
+        return self.critic_heads[asset]
+
+    # Retrocompatibilidad mínima si alguna parte del código espera .actor / .critic
+    # Puedes fijarlas a un activo por defecto (p. ej., el primero) o levantar error explícito.
+    @property
+    def actor(self):
+        raise AttributeError(
+            "Este modelo es multi-head. Usa get_actor(asset) en lugar de .actor."
+        )
+
+    @property
+    def critic(self):
+        raise AttributeError(
+            "Este modelo es multi-head. Usa get_critic(asset) en lugar de .critic."
+        )
