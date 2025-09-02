@@ -14,7 +14,9 @@ from src.utils.data_processor import DataProcessor
 from src.env.crypto_env import CryptoTradingEnv
 from src.models.ppo_agent import PPOAgent
 
-# Configure GPU for training
+# =============================================================================
+# GPU setup (con memoria creciente / límite de memoria) - CONSERVADO
+# =============================================================================
 def configure_gpu():
     """Configure TensorFlow to use GPU with proper memory growth settings"""
     try:
@@ -60,6 +62,9 @@ def configure_gpu():
 os.makedirs('models', exist_ok=True)
 os.makedirs('results', exist_ok=True)
 
+# =============================================================================
+# ENTRENAMIENTO PPO con MULTI-HEAD/MULTI-ACTIVO (retrocompatible)
+# =============================================================================
 def train_agent(
     symbol='BTCUSDT',
     interval='1h',
@@ -76,47 +81,15 @@ def train_agent(
     commission=0.001,            # Added commission parameter
     use_gpu=True,                # Flag to enable/disable GPU
     start_episode=0,             # Starting episode for resuming training
-    use_lr_schedule=False         # Flag to enable/disable learning rate scheduling
+    use_lr_schedule=False,        # Flag to enable/disable learning rate scheduling
+    assets=None                   # NUEVO: lista de símbolos para multi-activo; None => [symbol]
 ):
     """
-    Train the PPO agent with cryptocurrency data following the flowchart in Figure 4
-    
-    Parameters:
-    -----------
-    symbol : str
-        Trading pair symbol
-    interval : str
-        Timeframe interval
-    start_date : str
-        Start date for data
-    end_date : str
-        End date for data
-    test_split : float
-        Portion of data to use for testing
-    lookback_window_size : int
-        Number of past time steps to include in state
-    episodes : int
-        Number of episodes to train (4000 in the paper)
-    trajectory_size : int
-        Number of steps to collect in each trajectory (1000 in the paper)
-    batch_size : int
-        Batch size for training (32 in the paper)
-    epochs : int
-        Number of epochs for each training update (5 in the paper)
-    initial_balance : float
-        Initial balance for the agent
-    save_freq : int
-        Frequency to save models during training
-    commission : float
-        Trading commission rate
-    use_gpu : bool
-        Whether to use GPU for training if available
-    start_episode : int
-        Episode number to start from (for resuming training)
-    use_lr_schedule : bool
-        Whether to use learning rate scheduling
+    Train the PPO agent with cryptocurrency data (multi-activo, multi-head).
+    Si assets es None, el flujo es idéntico al original (un solo símbolo).
     """
-    # Clear any existing GPU memory
+
+    # ---------------- GPU / Sesión ----------------
     if use_gpu:
         tf.keras.backend.clear_session()
         gpu_available = configure_gpu()
@@ -125,213 +98,144 @@ def train_agent(
     else:
         print("GPU disabled by user. Training on CPU.")
     
-    print(f"Training agent for {symbol} from {start_date} to {end_date}")
-    print(f"Parameters: {lookback_window_size} lookback window, {episodes} episodes")
+    # ---------------- Configuración de activos ----------------
+    # Retrocompatibilidad: si no se pasa assets → usar el parámetro 'symbol' como único activo
+    if assets is None or len(assets) == 0:
+        assets = [symbol]
+    else:
+        assets = list(assets)
+
+    print(f"Training agent for assets: {assets} | interval: {interval} | {start_date} → {end_date}")
+    print(f"Parameters: lookback={lookback_window_size}, episodes={episodes}")
     print(f"Trajectory size: {trajectory_size}, Batch size: {batch_size}, Epochs: {epochs}")
     print(f"Initial balance: ${initial_balance}, Commission: {commission*100}%")
     print("Note: Training may take approximately 100 hours to complete all episodes based on paper")
     
     start_time = datetime.now()
     
-    # Step 1: Input Data (as shown in Figure 4)
+    # =============================================================================
+    # Step 1-3: Carga, indicadores y estandarización (por activo) — CONSERVADO
+    # =============================================================================
     print("Step 1: Loading and processing data...")
     data_processor = DataProcessor()
-    df = data_processor.download_data(symbol, interval, start_date, end_date)
+
+    envs = {}
+    train_dfs = {}
+    test_dfs = {}
+
+    for sym in assets:
+        # Descarga y preparación
+        df = data_processor.download_data(sym, interval, start_date, end_date)
+        print(f"Step 2: Adding technical indicators for {sym}...")
+        df = data_processor.prepare_data(df)  # incluye estandarización, etc. (Step 3)
+
+        # Split train/test
+        train_size = int(len(df) * (1 - test_split))
+        train_df = df.iloc[:train_size]
+        test_df = df.iloc[train_size:]
+
+        train_dfs[sym] = train_df
+        test_dfs[sym] = test_df
+
+        print(f"{sym} → Training data: {len(train_df)} samples | Testing data: {len(test_df)} samples")
+
+    # =============================================================================
+    # Step 4: Inicializa un entorno por activo (misma observación/acción)
+    # =============================================================================
+    print("Step 4: Initializing environments...")
+    for sym in assets:
+        envs[sym] = CryptoTradingEnv(
+            train_dfs[sym],
+            lookback_window_size=lookback_window_size,
+            initial_balance=initial_balance,
+            commission=commission
+        )
+
+    # Usamos el primer entorno para obtener la forma del estado y el tamaño de acción
+    ref_env = envs[assets[0]]
+    input_shape = ref_env.observation_space.shape
+    action_space = ref_env.action_space.n
     
-    # Step 2: Add indicators (as shown in Figure 4)
-    print("Step 2: Adding technical indicators...")
-    df = data_processor.prepare_data(df)
-    
-    # Step 3: Data standardization (as shown in Figure 4)
-    print("Step 3: Standardizing data...")
-    # Already handled in data_processor.prepare_data()
-    
-    # Split into training and testing sets
-    train_size = int(len(df) * (1 - test_split))
-    train_df = df.iloc[:train_size]
-    test_df = df.iloc[train_size:]
-    
-    print(f"Training data: {len(train_df)} samples")
-    print(f"Testing data: {len(test_df)} samples")
-    
-    # Step 4: Initialize environment (as shown in Figure 4)
-    print("Step 4: Initializing environment...")
-    train_env = CryptoTradingEnv(train_df, lookback_window_size, initial_balance, commission)
-    
-    # Get input shape and action space from environment
-    input_shape = train_env.observation_space.shape
-    action_space = train_env.action_space.n
-    
-    # Step 5: Initialize Actor and Critic model (as shown in Figure 4)
-    print("Step 5: Initializing Actor and Critic models...")
+    # =============================================================================
+    # Step 5: Inicializa PPOAgent con multi-head (una cabeza por activo)
+    # =============================================================================
+    print("Step 5: Initializing Actor and Critic models (multi-head)...")
     agent = PPOAgent(
         input_shape=input_shape, 
         action_space=action_space,
-        use_lr_schedule=use_lr_schedule
+        use_lr_schedule=use_lr_schedule,
+        assets=assets,            # <- importante para multi-head
+        default_asset=assets[0]   # <- cabeza activa por defecto
     )
 
+    # =============================================================================
+    # Reanudar desde checkpoint (retrocompatible).
+    # Para multi-activo, se intentan cargar 'latest' por cada activo.
+    # =============================================================================
     #start_episode = DataProcessor.get_last_episode_from_results() + 1
-    # Check if we're resuming from a checkpoint
     if start_episode > 0:
         try:
-            # First try to load the latest model for crash recovery
-            actor_path = f'models/{symbol}_actor_latest.keras'
-            critic_path = f'models/{symbol}_critic_latest.keras'
-            
-            # If latest model doesn't exist, try older checkpoint formats as fallback
-            if not os.path.exists(actor_path) or not os.path.exists(critic_path):
-                # Try checkpoint from specific episode
-                latest_checkpoint = start_episode - 1
-                actor_path = f'models/{symbol}_actor_checkpoint_ep{latest_checkpoint}.keras'
-                critic_path = f'models/{symbol}_critic_checkpoint_ep{latest_checkpoint}.keras'
-                print(f"Latest models not found. Trying checkpoint format: {actor_path}")
+            if len(assets) == 1:
+                # Ruta original mono-activo (conservada)
+                actor_path = f'models/{symbol}_actor_latest.keras'
+                critic_path = f'models/{symbol}_critic_latest.keras'
                 
-                # If that fails, try old episode format
-            if not os.path.exists(actor_path) or not os.path.exists(critic_path):
-                latest_checkpoint = start_episode - (start_episode % save_freq)
-                if latest_checkpoint == 0:
-                    latest_checkpoint = save_freq
+                if not os.path.exists(actor_path) or not os.path.exists(critic_path):
+                    latest_checkpoint = start_episode - 1
+                    actor_path = f'models/{symbol}_actor_checkpoint_ep{latest_checkpoint}.keras'
+                    critic_path = f'models/{symbol}_critic_checkpoint_ep{latest_checkpoint}.keras'
+                    print(f"Latest models not found. Trying checkpoint format: {actor_path}")
+                if not os.path.exists(actor_path) or not os.path.exists(critic_path):
+                    latest_checkpoint = start_episode - (start_episode % save_freq)
+                    if latest_checkpoint == 0:
+                        latest_checkpoint = save_freq
                     actor_path = f'models/{symbol}_actor_episode_{latest_checkpoint}.keras'
                     critic_path = f'models/{symbol}_critic_episode_{latest_checkpoint}.keras'
                     print(f"Checkpoint not found. Trying old episode format: {actor_path}")
-            
-            if os.path.exists(actor_path) and os.path.exists(critic_path):
-                print(f"Loading models from {actor_path} and {critic_path}...")
-                agent.load_models(actor_path, critic_path)
-                print("Models loaded successfully!")
                 
-                # Load training history if available
-                history_path = f'results/{symbol}_training_metrics_ep{start_episode-1}.csv'
-                
-                # If not found, try the latest history file
-                if not os.path.exists(history_path):
-                    # Find the latest training metrics file
-                    metrics_files = [f for f in os.listdir('results') if f.startswith(f'{symbol}_training_metrics_ep') and f.endswith('.csv')]
-                    if metrics_files:
-                        # Sort by episode number to get the latest
-                        metrics_files.sort(key=lambda x: int(x.split('ep')[1].split('.')[0]), reverse=True)
-                        history_path = os.path.join('results', metrics_files[0])
-                        print(f"Using latest metrics file: {history_path}")
-                    else:
-                        # If no episode-specific metrics file found, try generic one
-                        history_path = f'results/{symbol}_training_metrics.csv'
-                        print(f"No episode-specific metrics found. Trying: {history_path}")
-                
-                if os.path.exists(history_path):
-                    print(f"Loading training history from {history_path}...")
-                    history_df = pd.read_csv(history_path)
+                if os.path.exists(actor_path) and os.path.exists(critic_path):
+                    print(f"Loading models from {actor_path} and {critic_path}...")
+                    agent.load_models(actor_path, critic_path)
+                    print("Models loaded successfully!")
                     
-                    # Check if we need to filter the history to match our starting episode
-                    if max(history_df['episode']) >= start_episode:
-                        history_df = history_df[history_df['episode'] < start_episode]
-                        print(f"Filtered history to episodes before {start_episode}")
-                    
-                    # Try to load the additional data files for plotting
-                    actor_loss_per_replay = []
-                    trajectory_steps = []
-                    
-                    # Extract episode number from history path if possible
-                    history_ep = None
-                    if 'ep' in history_path:
-                        try:
-                            history_ep = int(history_path.split('ep')[1].split('.')[0])
-                        except:
-                            history_ep = None
-                    
-                    # Try to load actor_loss_per_replay data
-                    if history_ep is not None:
-                        actor_loss_path = f'results/{symbol}_actor_loss_per_replay_ep{history_ep}.npy'
-                    else:
-                        # Find the latest actor loss file
-                        actor_loss_files = [f for f in os.listdir('results') if f.startswith(f'{symbol}_actor_loss_per_replay_ep') and f.endswith('.npy')]
-                        if actor_loss_files:
-                            actor_loss_files.sort(key=lambda x: int(x.split('ep')[1].split('.')[0]), reverse=True)
-                            actor_loss_path = os.path.join('results', actor_loss_files[0])
+                    # Carga de histórico (mono-activo)
+                    history_path = f'results/{symbol}_training_metrics_ep{start_episode-1}.csv'
+                    if not os.path.exists(history_path):
+                        metrics_files = [f for f in os.listdir('results') if f.startswith(f'{symbol}_training_metrics_ep') and f.endswith('.csv')]
+                        if metrics_files:
+                            metrics_files.sort(key=lambda x: int(x.split('ep')[1].split('.')[0]), reverse=True)
+                            history_path = os.path.join('results', metrics_files[0])
+                            print(f"Using latest metrics file: {history_path}")
                         else:
-                            actor_loss_path = f'results/{symbol}_actor_loss_per_replay.npy'
+                            history_path = f'results/{symbol}_training_metrics.csv'
+                            print(f"No episode-specific metrics found. Trying: {history_path}")
                     
-                    if os.path.exists(actor_loss_path):
-                        try:
-                            actor_loss_per_replay = np.load(actor_loss_path).tolist()
-                            print(f"Loaded actor loss per replay data: {len(actor_loss_per_replay)} records")
-                        except Exception as e:
-                            print(f"Error loading actor loss data: {e}")
-                    
-                    # Similarly for trajectory steps
-                    if history_ep is not None:
-                        trajectory_steps_path = f'results/{symbol}_trajectory_steps_ep{history_ep}.npy'
-                    else:
-                        # Find the latest trajectory steps file
-                        trajectory_files = [f for f in os.listdir('results') if f.startswith(f'{symbol}_trajectory_steps_ep') and f.endswith('.npy')]
-                        if trajectory_files:
-                            trajectory_files.sort(key=lambda x: int(x.split('ep')[1].split('.')[0]), reverse=True)
-                            trajectory_steps_path = os.path.join('results', trajectory_files[0])
-                        else:
-                            trajectory_steps_path = f'results/{symbol}_trajectory_steps.npy'
-                    
-                    if os.path.exists(trajectory_steps_path):
-                        try:
-                            trajectory_steps = np.load(trajectory_steps_path).tolist()
-                            print(f"Loaded trajectory steps data: {len(trajectory_steps)} episodes")
-                        except Exception as e:
-                            print(f"Error loading trajectory steps data: {e}")
-                    
-                    train_history = {
-                        'episode': history_df['episode'].tolist(),
-                        'net_worth': history_df['net_worth'].tolist(),
-                        'avg_reward': history_df['avg_reward'].tolist(),
-                        'actor_loss': history_df['actor_loss'].tolist(),
-                        'critic_loss': history_df['critic_loss'].tolist(),
-                        'total_loss': history_df['total_loss'].tolist(),
-                        'actor_loss_per_replay': actor_loss_per_replay,
-                        'orders_per_episode': history_df['orders'].tolist() if 'orders' in history_df.columns else [],
-                        'trajectory_steps_per_episode': trajectory_steps,
-                    }
+                    # Nota: Para multi-activo, el histórico se maneja por-asset más abajo
                 else:
-                    print(f"No training history found at {history_path}, starting a new history")
-                    train_history = {
-                        'episode': [],
-                        'net_worth': [],
-                        'avg_reward': [],
-                        'actor_loss': [],
-                        'critic_loss': [],
-                        'total_loss': [],
-                        'actor_loss_per_replay': [],
-                        'orders_per_episode': [],
-                        'trajectory_steps_per_episode': [],
-                    }
+                    print(f"No checkpoint found for episode {start_episode}, starting from beginning")
+                    start_episode = 0
             else:
-                print(f"No checkpoint found for episode {start_episode}, starting from beginning")
-                start_episode = 0
-                train_history = {
-                    'episode': [],
-                    'net_worth': [],
-                    'avg_reward': [],
-                    'actor_loss': [],
-                    'critic_loss': [],
-                    'total_loss': [],
-                    'actor_loss_per_replay': [],
-                    'orders_per_episode': [],
-                    'trajectory_steps_per_episode': [],
-                }
+                # Multi-activo: intentamos cargar latest por cada activo
+                for sym in assets:
+                    actor_path = f'models/{sym}_actor_latest.keras'
+                    critic_path = f'models/{sym}_critic_latest.keras'
+                    if os.path.exists(actor_path) and os.path.exists(critic_path):
+                        try:
+                            agent.set_active_asset(sym)
+                            agent.load_models(actor_path, critic_path)
+                            print(f"[resume] Loaded latest models for {sym}")
+                        except Exception as e:
+                            print(f"[resume] Could not load latest for {sym}: {e}")
         except Exception as e:
             print(f"Error loading checkpoint: {e}")
             print("Starting from beginning...")
             start_episode = 0
-            train_history = {
-                'episode': [],
-                'net_worth': [],
-                'avg_reward': [],
-                'actor_loss': [],
-                'critic_loss': [],
-                'total_loss': [],
-                'actor_loss_per_replay': [],
-                'orders_per_episode': [],
-                'trajectory_steps_per_episode': [],
-            }
-    else:
-        # Training metrics tracking for fresh start
-        train_history = {
+
+    # =============================================================================
+    # Estructuras de métricas/histórico (AHORA por activo)
+    # =============================================================================
+    train_history = {
+        sym: {
             'episode': [],
             'net_worth': [],
             'avg_reward': [],
@@ -341,151 +245,143 @@ def train_agent(
             'actor_loss_per_replay': [],
             'orders_per_episode': [],
             'trajectory_steps_per_episode': [],
-        }
+        } for sym in assets
+    }
+    best_reward = {sym: -np.inf for sym in assets}
     
-    best_reward = -np.inf
-    
-    # Start training loop (matching pseudocode in Figure 5)
+    # =============================================================================
+    # Bucle de entrenamiento (Figura 4/5) — Ahora round-robin por activo
+    # =============================================================================
     print("Starting training (following flowchart in Figure 4)...")
-    
-    # Create an exception handling wrapper for the training loop
     try:
         for episode in range(start_episode, episodes):
             episode_start_time = datetime.now()
             print(f"Episode {episode+1}/{episodes}")
-            
-            # Reset environment at the beginning of each episode (Figure 5: Environment reset)
-            state = train_env.reset()
+
+            # Selección de activo (round-robin)
+            current_asset = assets[episode % len(assets)]
+            train_env = envs[current_asset]
+            agent.set_active_asset(current_asset)
+
+            # Reset del entorno (con trajectory_size para asegurar ventana)
+            state = train_env.reset(trajectory_size=trajectory_size)
             episode_reward = 0
             done = False
-            orders_count = 0  # Track number of orders in this episode
-            position_sizes = []  # Track position sizes for this episode
-            
-        
-            
-            # Collect trajectory by running old policy in environment (Figure 5)
-            print(f"Collecting trajectory...")
+            orders_count = 0
+
+            # ---------------- Recolección de trayectoria ----------------
+            print(f"Collecting trajectory on {current_asset}...")
             steps = 0
-            
-            # Use tqdm for progress bar
-            pbar = tqdm(total=trajectory_size, desc="Collecting experiences")
-            
-            
-            # Initialize lists to store experience for this episode
-            states = []
-            actions = []
-            rewards = []
-            next_states = []
-            dones = []
-            action_probs_list = []
-            
-            # Collect trajectory
+            pbar = tqdm(total=trajectory_size, desc=f"[{current_asset}] Collecting experiences")
+
+            # Buffers locales (si quieres, puedes seguir aprovechando)
+            states, actions, rewards, next_states, dones, action_probs_list = [], [], [], [], [], []
+
             try:
                 while steps < trajectory_size and not done:
-                    # Actor predict action on given states with risk management
-                    action, action_probs = agent.get_action(state)
-                    
-                    # Environment take predicted action (as shown in Figure 4)
+                    # Política actual → acción (cabeza del activo actual)
+                    try:
+                        action, action_probs = agent.get_action(state, asset=current_asset)
+                    except TypeError:
+                        # retrocompatibilidad: agente antiguo sin parámetro asset
+                        action, action_probs = agent.get_action(state)
+
+                    # Paso de entorno
                     next_state, reward, done, info = train_env.step(action)
-                    
-                    # Calculate PnL from this step
-                    pnl = info['net_worth'] - train_env.prev_net_worth
-                    
-                    # Count orders (buy or sell actions)
-                    if action in [0, 2]:  # 0 = Buy, 2 = Sell
+
+                    # Contabiliza órdenes (buy/sell)
+                    if action in [0, 2]:
                         orders_count += 1
-                    
-                    # Store experience in agent memory with risk information
-                    agent.remember(state, action, reward, next_state, done, action_probs)
-                    
-                    # Also store in our temporary lists
+
+                    # Memoria del agente (en la cabeza del activo actual)
+                    try:
+                        agent.remember(state, action, reward, next_state, done, action_probs, asset=current_asset)
+                    except TypeError:
+                        agent.remember(state, action, reward, next_state, done, action_probs)
+
+                    # Buffers locales (opcional)
                     states.append(state)
                     actions.append(action)
                     rewards.append(reward)
                     next_states.append(next_state)
                     dones.append(done)
                     action_probs_list.append(action_probs)
-                    
-                    # Update state and reward
+
+                    # Avanza
                     state = next_state
                     episode_reward += reward
                     steps += 1
-                    
-                    # Update progress bar
+
+                    # Barra de progreso
                     pbar.update(1)
                     pbar.set_postfix({
                         'reward': f'{episode_reward:.2f}', 
                         'net_worth': f'${info["net_worth"]:.2f}',
                     })
-                    
-                    # No intermediate state saving needed since we save the latest model before each episode
             except Exception as e:
                 print(f"Error during trajectory collection: {e}")
-                # Try to save what we have so far
-                save_training_metrics(train_history, symbol, episode)
+                # Guarda lo que haya del activo actual
+                save_training_metrics(train_history[current_asset], current_asset, episode)
                 raise e
+            finally:
+                pbar.close()
                 
-            pbar.close()
-                
-            # Print trajectory summary
-            print(f"Collected {steps} steps, Final reward: {episode_reward:.2f}, Net worth: ${info['net_worth']:.2f}")
+            # Resumen de trayectoria
+            print(f"Collected {steps} steps | Final reward: {episode_reward:.2f} | Net worth: ${info['net_worth']:.2f}")
             print(f"Orders executed: {orders_count}")
+
+            # Guarda steps por episodio
+            train_history[current_asset]['trajectory_steps_per_episode'].append(steps)
             
-            # Make sure trajectory_steps_per_episode is being tracked
-            if 'trajectory_steps_per_episode' in train_history:
-                train_history['trajectory_steps_per_episode'].append(steps)
-            else:
-                train_history['trajectory_steps_per_episode'] = [steps]
-            
-            # PPO Update step (Figure 5: "Update current policy" step)
+            # ---------------- Actualización PPO ----------------
             print("Updating policy...")
-            
-            # Run several epochs of training
-            actor_losses = []
-            critic_losses = []
-            total_losses = []
-            
-            # Training on the collected experiences
+            actor_losses, critic_losses, total_losses = [], [], []
+
             try:
-                training_metrics = agent.train(batch_size=batch_size, epochs=epochs)
-                
-                # Collect losses
-                actor_losses.extend(training_metrics['actor_loss'])
-                critic_losses.extend(training_metrics['critic_loss'])
-                total_losses.extend(training_metrics['total_loss'])
-                
-                # Store actor loss per replay for visualization
-                train_history['actor_loss_per_replay'].extend(training_metrics['actor_loss'])
+                # Entrenar sobre lo recolectado (en la cabeza del activo actual)
+                try:
+                    training_metrics = agent.train(batch_size=batch_size, epochs=epochs, asset=current_asset)
+                except TypeError:
+                    training_metrics = agent.train(batch_size=batch_size, epochs=epochs)
+
+                # Se espera un dict como el original:
+                # {'actor_loss': [...], 'critic_loss': [...], 'total_loss': [...]}
+                actor_losses.extend(training_metrics.get('actor_loss', []))
+                critic_losses.extend(training_metrics.get('critic_loss', []))
+                total_losses.extend(training_metrics.get('total_loss', []))
+
+                # Guardar pérdidas por step para gráfico (por-asset)
+                train_history[current_asset]['actor_loss_per_replay'].extend(training_metrics.get('actor_loss', []))
             except Exception as e:
                 print(f"Error during policy update: {e}")
-                # Try to save what we have so far
-                save_training_metrics(train_history, symbol, episode)
+                save_training_metrics(train_history[current_asset], current_asset, episode)
                 raise e
             
-            # Calculate average losses
-            avg_actor_loss = np.mean(actor_losses) if actor_losses else 0
-            avg_critic_loss = np.mean(critic_losses) if critic_losses else 0
-            avg_total_loss = np.mean(total_losses) if total_losses else 0
+            # Promedios
+            avg_actor_loss = float(np.mean(actor_losses)) if actor_losses else 0.0
+            avg_critic_loss = float(np.mean(critic_losses)) if critic_losses else 0.0
+            avg_total_loss = float(np.mean(total_losses)) if total_losses else 0.0
             
-            # Store training metrics
-            train_history['episode'].append(episode)
-            train_history['net_worth'].append(info['net_worth'])
-            train_history['avg_reward'].append(episode_reward)
-            train_history['actor_loss'].append(avg_actor_loss)
-            train_history['critic_loss'].append(avg_critic_loss)
-            train_history['total_loss'].append(avg_total_loss)
-            train_history['orders_per_episode'].append(orders_count)
+            # ---------------- Registrar métricas del episodio (por-asset) ----------------
+            hist = train_history[current_asset]
+            hist['episode'].append(episode)
+            hist['net_worth'].append(info['net_worth'])
+            hist['avg_reward'].append(episode_reward)
+            hist['actor_loss'].append(avg_actor_loss)
+            hist['critic_loss'].append(avg_critic_loss)
+            hist['total_loss'].append(avg_total_loss)
+            hist['orders_per_episode'].append(orders_count)
         
-            # Save model if performance improved (as shown in Figure 4)
-            if episode_reward > best_reward:
-                best_reward = episode_reward
+            # ---------------- Guardado "best" por activo ----------------
+            if episode_reward > best_reward[current_asset]:
+                best_reward[current_asset] = episode_reward
                 agent.save_models(
-                    f'models/{symbol}_actor_best.keras',
-                    f'models/{symbol}_critic_best.keras'
+                    f'models/{current_asset}_actor_best.keras',
+                    f'models/{current_asset}_critic_best.keras'
                 )
-                print(f"Episode {episode+1}: New best model saved with reward {episode_reward:.2f}")
+                print(f"Episode {episode+1}: New best model saved for {current_asset} with reward {episode_reward:.2f}")
             
-            # Print episode summary
+            # ---------------- Logs de tiempo y métricas ----------------
             episode_end_time = datetime.now()
             time_delta = episode_end_time - episode_start_time
             minutes = time_delta.total_seconds() / 60
@@ -495,30 +391,27 @@ def train_agent(
             total_hours = total_time.total_seconds() / 3600
             print(f"Total training time so far: {total_hours:.2f} hours")
             
-            # Save models and training metrics at specified frequency
+            # ---------------- Guardado periódico de métricas/plots ----------------
             if (episode + 1) % save_freq == 0:
-                print(f"Saving metrics at episode {episode+1}...")
-                # Save training metrics
-                save_training_metrics(train_history, symbol, episode+1)
+                print(f"Saving metrics at episode {episode+1} for asset {current_asset}...")
+                save_training_metrics(train_history[current_asset], current_asset, episode+1)
+                plot_training_results(train_history[current_asset], current_asset)
                 
-                # Plot and save training metrics
-                plot_training_results(train_history, symbol)
-                
-                # Delete temporary checkpoint files
+                # Limpieza de checkpoints temporales (sólo los del activo actual)
                 for temp_file in os.listdir('models'):
-                    if (temp_file.startswith(f"{symbol}_checkpoint_ep") or "_step" in temp_file) and temp_file.endswith(".keras"):
+                    if (temp_file.startswith(f"{current_asset}_checkpoint_ep") or "_step" in temp_file) and temp_file.endswith(".keras"):
                         try:
                             os.remove(os.path.join('models', temp_file))
                         except Exception as e:
                             print(f"Warning: Could not delete {temp_file}: {e}")
             
-            # Save the latest model after each episode (for crash recovery)
+            # ---------------- Guardado "latest" por activo ----------------
             agent.save_models(
-                f'models/{symbol}_actor_latest.keras',
-                f'models/{symbol}_critic_latest.keras'
+                f'models/{current_asset}_actor_latest.keras',
+                f'models/{current_asset}_critic_latest.keras'
             )
             
-            # Print estimated time to completion
+            # ---------------- ETA estimada ----------------
             if episode > start_episode:
                 avg_time_per_episode = total_time.total_seconds() / (episode - start_episode + 1)
                 remaining_episodes = episodes - episode - 1
@@ -526,49 +419,56 @@ def train_agent(
                 estimated_remaining_hours = estimated_remaining_seconds / 3600
                 print(f"Estimated time to completion: {estimated_remaining_hours:.2f} hours")
             
-            # Clear memory to free up RAM
-            agent.clear_memory()
+            # ---------------- Limpieza de memoria ----------------
+            try:
+                agent.clear_memory(asset=current_asset)
+            except TypeError:
+                agent.clear_memory()
             
-            # Add a flush to ensure outputs are written to log files
+            # Asegura flush de stdout (útil en logs)
             sys.stdout.flush()
             
     except Exception as e:
+        # Manejo general de excepciones con guardado de emergencia
         print(f"Error during training: {e}")
-        # Try to save current state before exiting
         print("Attempting to save current state before exiting...")
         try:
+            # Usa el activo actual si existe, si no el primero
+            asset_to_save = locals().get('current_asset', assets[0])
+            agent.set_active_asset(asset_to_save)
             agent.save_models(
-                f'models/{symbol}_actor_latest.keras',
-                f'models/{symbol}_critic_latest.keras'
+                f'models/{asset_to_save}_actor_latest.keras',
+                f'models/{asset_to_save}_critic_latest.keras'
             )
-            save_training_metrics(train_history, symbol, episode)
+            save_training_metrics(train_history[asset_to_save], asset_to_save, locals().get('episode', 0))
             print("Emergency save completed. You can resume from this episode.")
         except Exception as save_error:
             print(f"Could not complete emergency save: {save_error}")
         raise e
         
-    # Final save at the end of training
+    # =============================================================================
+    # Guardado final al terminar todo el entrenamiento (por activo)
+    # =============================================================================
     print("Training complete. Saving final models and metrics...")
-    # Save latest model one last time
-    agent.save_models(
-        f'models/{symbol}_actor_latest.keras',
-        f'models/{symbol}_critic_latest.keras'
-    )
+    for sym in assets:
+        agent.set_active_asset(sym)
+        agent.save_models(
+            f'models/{sym}_actor_latest.keras',
+            f'models/{sym}_critic_latest.keras'
+        )
+        save_training_metrics(train_history[sym], sym, episodes)
+        plot_training_results(train_history[sym], sym)
     
-    # Save final training metrics
-    save_training_metrics(train_history, symbol, episodes)
-    
-    # Plot final results
-    plot_training_results(train_history, symbol)
-    
-    # Print total training time
+    # Tiempo total
     end_time = datetime.now()
     total_time = end_time - start_time
     total_hours = total_time.total_seconds() / 3600
     print(f"Total training time: {total_hours:.2f} hours")
     
 
-
+# =============================================================================
+# Guardado de métricas (CONSERVED) — funciona igual, ahora lo llamamos por-asset
+# =============================================================================
 def save_training_metrics(history, symbol, episode):
     """Save training metrics at checkpoint"""
     try:
@@ -622,6 +522,9 @@ def save_training_metrics(history, symbol, episode):
         import traceback
         traceback.print_exc()
 
+# =============================================================================
+# Gráficos de entrenamiento (CONSERVED) — seguimos llamando por-asset
+# =============================================================================
 def plot_training_results(history, symbol):
     """Plot training metrics"""
     # Create directory for plots
@@ -740,7 +643,11 @@ def plot_training_results(history, symbol):
     
     plt.close("all")
 
+# =============================================================================
+# Punto de entrada — retrocompatible (puedes pasar assets en la llamada)
+# =============================================================================
 if __name__ == "__main__":
+    # Ejemplo mono-activo (retrocompatible con el comportamiento original):
     train_agent(
         symbol='BTCUSDT',
         interval='1h',
@@ -753,4 +660,5 @@ if __name__ == "__main__":
         initial_balance=10000,
         commission=0.001,      # 0.1% commission
         use_lr_schedule=False   # Enable learning rate scheduling for better convergence
+        # assets=['BTCUSDT','ETHUSDT','SOLUSDT']  # <-- descomenta para entrenar multi-activo
     )
