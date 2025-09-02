@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import time
@@ -6,58 +7,56 @@ import glob
 import re
 from datetime import datetime, date
 
-def get_latest_episode():
-    """Find the latest episode number from model files or checkpoint files"""
-    # Look for latest model
-    if os.path.exists('models/BTCUSDT_actor_latest.keras'):
-        # Try to find episode number from metrics files
-        metrics_files = glob.glob('results/BTCUSDT_training_metrics_ep*.csv')
-        if metrics_files:
-            # Extract episode numbers from filenames
-            episode_numbers = []
-            for file in metrics_files:
-                match = re.search(r'ep(\d+)\.csv$', file)
-                if match:
-                    episode_numbers.append(int(match.group(1)))
-            if episode_numbers:
-                return max(episode_numbers)
-    
-    # If no model file or couldn't determine episode, start from beginning
-    return 0
+# Busca el último episodio disponible en results/{asset}_training_metrics_ep*.csv
+def get_latest_episode_for_assets(assets):
+    latest = 0
+    for sym in assets:
+        files = glob.glob(f"results/{sym}_training_metrics_ep*.csv")
+        for fpath in files:
+            m = re.search(r'ep(\d+)\.csv$', fpath)
+            if m:
+                try:
+                    val = int(m.group(1))
+                    if val > latest:
+                        latest = val
+                except:
+                    pass
+    return latest
 
 def main():
-    # Configuration parameters (could be moved to command line arguments)
-    symbol = 'BTCUSDT'
+    # -------- Configuración (ajusta según tu caso) --------
+    assets = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']   # <-- lista de activos a entrenar
     interval = '1h'
     start_date = '2023-01-01'
     end_date = date.today().strftime('%Y-%m-%d')
     episodes = 3000
-    save_freq = 1  
+    save_freq = 1
     max_restarts = 20
-    
+
+    # Ruta al script que invoca train_agent
+    train_bot_script = os.path.join(os.path.dirname(__file__), 'train_bot.py')
+
     restart_count = 0
-    current_episode = get_latest_episode()
-    
-    print("=" * 50)
-    print(f"AUTO-RESUME TRAINING SCRIPT")
-    print(f"Starting from episode {current_episode}/{episodes}")
-    print("=" * 50)
-    
-    # Create a log file for the auto-resume process
+    current_episode = get_latest_episode_for_assets(assets)
+
+    # Log file
     os.makedirs('logs', exist_ok=True)
     log_file = f"logs/auto_resume_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    
+
+    print("="*60)
+    print("AUTO-RESUME (MULTI-ACTIVO)")
+    print(f"Assets: {assets}")
+    print(f"Starting from episode {current_episode}/{episodes}")
+    print("="*60)
+
     while current_episode < episodes and restart_count < max_restarts:
-        # Log the restart
-        with open(log_file, 'a') as f:
-            f.write(f"{datetime.now()}: Starting/Resuming training from episode {current_episode}\n")
-        
-        print(f"Starting training from episode {current_episode}")
-        
-        # Construct the command to run train_bot.py
+        with open(log_file, "a") as f:
+            f.write(f"{datetime.now()}: Starting training from episode {current_episode}\n")
+
+        # Monta el comando: pasamos --assets ... y --resume-from current_episode
         cmd = [
-            sys.executable, "train_bot.py",
-            "--symbol", symbol,
+            sys.executable, train_bot_script,
+            "--assets", *assets,
             "--interval", interval,
             "--start-date", start_date,
             "--end-date", end_date,
@@ -66,58 +65,44 @@ def main():
             "--resume-from", str(current_episode),
             "--mixed-precision"
         ]
-        
+
+        print(f"Launching training process (resume {current_episode})...")
         try:
-            # Run the training script
-            process = subprocess.Popen(cmd)
-            
-            # Wait for it to complete
-            process.wait()
-            
-            # Check if the process completed successfully
-            if process.returncode == 0:
-                print("Training completed successfully!")
-                with open(log_file, 'a') as f:
-                    f.write(f"{datetime.now()}: Training completed successfully!\n")
+            p = subprocess.Popen(cmd)
+            p.wait()
+
+            if p.returncode == 0:
+                print("Training process exited normally (code 0).")
                 break
             else:
-                # The process crashed
                 restart_count += 1
-                print(f"Training crashed with return code {process.returncode}. Restart {restart_count}/{max_restarts}")
-                with open(log_file, 'a') as f:
-                    f.write(f"{datetime.now()}: Training crashed with return code {process.returncode}. Restart {restart_count}/{max_restarts}\n")
-                
-                # Get the latest episode number for resuming
-                time.sleep(5)  # Wait a bit for files to be properly saved
-                current_episode = get_latest_episode()
+                print(f"Training crashed with return code {p.returncode} — restart {restart_count}/{max_restarts}")
+                with open(log_file, "a") as f:
+                    f.write(f"{datetime.now()}: Crash returncode={p.returncode}. Restart {restart_count}\n")
+
+                # Allow filesystem to settle then query latest episode
+                time.sleep(5)
+                current_episode = get_latest_episode_for_assets(assets)
                 print(f"Will resume from episode {current_episode}")
-                
+
         except KeyboardInterrupt:
-            # Handle manual interruption
-            print("\nTraining manually interrupted by user. Exiting.")
-            with open(log_file, 'a') as f:
-                f.write(f"{datetime.now()}: Training manually interrupted by user.\n")
+            print("User interrupted auto-train. Exiting.")
+            with open(log_file, "a") as f:
+                f.write(f"{datetime.now()}: Manual interrupt.\n")
             break
         except Exception as e:
-            # Handle other exceptions
             restart_count += 1
-            print(f"Exception occurred: {e}. Restart {restart_count}/{max_restarts}")
-            with open(log_file, 'a') as f:
-                f.write(f"{datetime.now()}: Exception occurred: {e}. Restart {restart_count}/{max_restarts}\n")
-            
-            # Get the latest episode number for resuming
-            time.sleep(5)  # Wait a bit for files to be properly saved
-            current_episode = get_latest_episode()
-            print(f"Will resume from episode {current_episode}")
-    
-    # Final report
+            print(f"Exception while launching training: {e}. Restart {restart_count}/{max_restarts}")
+            with open(log_file, "a") as f:
+                f.write(f"{datetime.now()}: Exception: {e}\n")
+            time.sleep(5)
+            current_episode = get_latest_episode_for_assets(assets)
+
+    # Report
     if current_episode >= episodes:
-        print("Training completed successfully after all episodes!")
+        print("All episodes finished. Training complete.")
     elif restart_count >= max_restarts:
-        print(f"Maximum number of restarts ({max_restarts}) reached. Stopping auto-resume.")
-    
-    with open(log_file, 'a') as f:
-        f.write(f"{datetime.now()}: Auto-resume script terminated.\n")
+        print("Max restarts reached; stopping auto-resume.")
 
 if __name__ == "__main__":
-    main() 
+    main()
