@@ -159,14 +159,19 @@ class PPOAgent:
         advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
         return advantages, returns
 
-    def get_learning_rates(self):
+    def get_learning_rates(self, asset=None):
+        if asset is None:
+            asset = self._active_asset  # usar el activo actual por defecto
+
         if self.use_lr_schedule:
-            actor_lr = self.actor_lr_schedule(self.training_steps)
-            critic_lr = self.critic_lr_schedule(self.training_steps)
+            actor_lr = self.actor_lr_schedules[asset](self.training_steps)
+            critic_lr = self.critic_lr_schedules[asset](self.training_steps)
         else:
-            actor_lr = self.actor_optimizer.learning_rate
-            critic_lr = self.critic_optimizer.learning_rate
+            actor_lr = self.actor_optimizers[asset].learning_rate
+            critic_lr = self.critic_optimizers[asset].learning_rate
+
         return {"actor_lr": float(actor_lr), "critic_lr": float(critic_lr)}
+
 
     # ---------- Entrenamiento multi-activo ----------
     def train(self, batch_size=32, epochs=5, asset=None):

@@ -16,7 +16,7 @@ if __name__ == "__main__":
     # Mantengo --symbol para retrocompatibilidad; --assets permite lista multi-activo
     parser.add_argument('--symbol', type=str, default='BTCUSDT',
                         help='Single trading pair symbol (retrocompatible).')
-    parser.add_argument('--assets', nargs='+', type=str, default=None,
+    parser.add_argument('--assets', nargs='+', type=str, default=['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
                         help='List of assets for multi-head training. Ej: --assets BTCUSDT ETHUSDT SOLUSDT (default: None -> uses --symbol only)')
     parser.add_argument('--interval', type=str, default='1h',
                         help='Timeframe interval (default: 1h)')
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     # Decide episodes (fast mode)
     if args.fast_train:
-        episodes = 100
+        episodes = 2
         print("⚠️ FAST TRAIN MODE: episodes set to 100 for quick testing")
     else:
         episodes = args.episodes

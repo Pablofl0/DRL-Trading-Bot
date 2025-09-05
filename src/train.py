@@ -176,29 +176,23 @@ def train_agent(
     if start_episode > 0:
         try:
             if len(assets) == 1:
-                # Ruta original mono-activo (conservada)
-                actor_path = f'models/{symbol}_actor_latest.keras'
-                critic_path = f'models/{symbol}_critic_latest.keras'
-                
-                if not os.path.exists(actor_path) or not os.path.exists(critic_path):
-                    latest_checkpoint = start_episode - 1
-                    actor_path = f'models/{symbol}_actor_checkpoint_ep{latest_checkpoint}.keras'
-                    critic_path = f'models/{symbol}_critic_checkpoint_ep{latest_checkpoint}.keras'
-                    print(f"Latest models not found. Trying checkpoint format: {actor_path}")
-                if not os.path.exists(actor_path) or not os.path.exists(critic_path):
+                # Ruta mono-activo (ahora checkpoint folder)
+                latest_checkpoint = start_episode - 1
+                checkpoint_dir = f'checkpoints/{symbol}_ep{latest_checkpoint}'
+
+                if not os.path.exists(checkpoint_dir):
                     latest_checkpoint = start_episode - (start_episode % save_freq)
                     if latest_checkpoint == 0:
                         latest_checkpoint = save_freq
-                    actor_path = f'models/{symbol}_actor_episode_{latest_checkpoint}.keras'
-                    critic_path = f'models/{symbol}_critic_episode_{latest_checkpoint}.keras'
-                    print(f"Checkpoint not found. Trying old episode format: {actor_path}")
-                
-                if os.path.exists(actor_path) and os.path.exists(critic_path):
-                    print(f"Loading models from {actor_path} and {critic_path}...")
-                    agent.load_models(actor_path, critic_path)
-                    print("Models loaded successfully!")
-                    
-                    # Carga de histórico (mono-activo)
+                    checkpoint_dir = f'checkpoints/{symbol}_ep{latest_checkpoint}'
+                    print(f"Checkpoint not found. Trying: {checkpoint_dir}")
+
+                if os.path.exists(checkpoint_dir):
+                    print(f"Loading checkpoint from {checkpoint_dir}...")
+                    agent.load_checkpoint(checkpoint_dir)
+                    print("Checkpoint loaded successfully!")
+
+                    # Cargar histórico mono-activo
                     history_path = f'results/{symbol}_training_metrics_ep{start_episode-1}.csv'
                     if not os.path.exists(history_path):
                         metrics_files = [f for f in os.listdir('results') if f.startswith(f'{symbol}_training_metrics_ep') and f.endswith('.csv')]
@@ -209,27 +203,25 @@ def train_agent(
                         else:
                             history_path = f'results/{symbol}_training_metrics.csv'
                             print(f"No episode-specific metrics found. Trying: {history_path}")
-                    
-                    # Nota: Para multi-activo, el histórico se maneja por-asset más abajo
                 else:
                     print(f"No checkpoint found for episode {start_episode}, starting from beginning")
                     start_episode = 0
             else:
                 # Multi-activo: intentamos cargar latest por cada activo
                 for sym in assets:
-                    actor_path = f'models/{sym}_actor_latest.keras'
-                    critic_path = f'models/{sym}_critic_latest.keras'
-                    if os.path.exists(actor_path) and os.path.exists(critic_path):
+                    checkpoint_dir = f'checkpoints/{sym}_latest'
+                    if os.path.exists(checkpoint_dir):
                         try:
                             agent.set_active_asset(sym)
-                            agent.load_models(actor_path, critic_path)
-                            print(f"[resume] Loaded latest models for {sym}")
+                            agent.load_checkpoint(checkpoint_dir)
+                            print(f"[resume] Loaded checkpoint for {sym}")
                         except Exception as e:
-                            print(f"[resume] Could not load latest for {sym}: {e}")
+                            print(f"[resume] Could not load checkpoint for {sym}: {e}")
         except Exception as e:
             print(f"Error loading checkpoint: {e}")
             print("Starting from beginning...")
             start_episode = 0
+
 
     # =============================================================================
     # Estructuras de métricas/histórico (AHORA por activo)
