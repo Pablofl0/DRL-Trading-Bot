@@ -294,19 +294,33 @@ class PPOAgent:
     # ---------- Guardado y carga ----------
     def save_checkpoint(self, dir_path: str):
         os.makedirs(dir_path, exist_ok=True)
-        full_model_path = os.path.join(dir_path, "ppo_agent_full_model")
-        self.model.save(full_model_path, include_optimizer=True)
-        print(f"✅ Checkpoint completo guardado en: {full_model_path}")
+
+        for sym in self.assets:
+            actor = self.get_actor(sym)
+            critic = self.get_critic(sym)
+
+            # Guardamos modelo completo con optimizador
+            actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
+            critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+
+            actor.save(actor_path, include_optimizer=True)
+            critic.save(critic_path, include_optimizer=True)
+
+        print(f"✅ Checkpoint guardado (modelos + optimizadores) en: {dir_path}")
+
 
     def load_checkpoint(self, dir_path: str):
-        full_model_path = os.path.join(dir_path, "ppo_agent_full_model")
-        if os.path.exists(full_model_path):
-            self.model = load_model(full_model_path)
-            self.actor = self.get_actor(self._active_asset)
-            self.critic = self.get_critic(self._active_asset)
-            print(f"✅ Checkpoint completo cargado desde: {full_model_path}")
-        else:
-            print(f"⚠️ No se encontró checkpoint en {full_model_path}")
+        for sym in self.assets:
+            actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
+            critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+
+            if os.path.exists(actor_path) and os.path.exists(critic_path):
+                self.model.set_actor(sym, tf.keras.models.load_model(actor_path, compile=True))
+                self.model.set_critic(sym, tf.keras.models.load_model(critic_path, compile=True))
+                print(f"✅ Checkpoint cargado para {sym}")
+            else:
+                print(f"⚠️ No checkpoint encontrado para {sym}, se usará inicialización.")
+
 
     def save_weights(self, dir_path: str):
         os.makedirs(dir_path, exist_ok=True)
