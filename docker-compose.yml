@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  training:
+    container_name: drl_trading_bot_trainer
+    build: .
+    restart: unless-stopped
+    command: python train.py
+    environment:
+      - MODE=train
+      - TF_CPP_MIN_LOG_LEVEL=2
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "6006:6006"  # TensorBoard
+
+  tensorboard:
+    image: tensorflow/tensorflow:2.15.0
+    container_name: tensorboard_drl
+    command: tensorboard --logdir=/app/logs --host=0.0.0.0
+    ports:
+      - "6007:6006"
+    volumes:
+      - ./logs:/app/logs
