@@ -29,7 +29,7 @@ def main():
     interval = '1h'
     start_date = '2023-01-01'
     end_date = date.today().strftime('%Y-%m-%d')
-    episodes = 3000
+    episodes = 100
     save_freq = 1
     max_restarts = 20
 

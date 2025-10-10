@@ -292,49 +292,78 @@ class PPOAgent:
         self.assets_memory = []
 
     # ---------- Guardado y carga ----------
-    def save_checkpoint(self, dir_path: str):
+    def save_checkpoint(self, dir_path: str, sym: str):
+        """
+        Guarda un checkpoint completo (modelo + optimizador) para un activo específico.
+
+        Este método guarda tanto el actor como el crítico con sus optimizadores,
+        ideal para reanudar el entrenamiento exactamente desde el mismo punto.
+
+        Parámetros:
+        -----------
+        dir_path : str
+            Carpeta donde se guardarán los checkpoints.
+        sym : str
+            Símbolo del activo (por ejemplo, 'BTCUSDT').
+        """
         os.makedirs(dir_path, exist_ok=True)
 
-        for sym in self.assets:
-            actor = self.get_actor(sym)
-            critic = self.get_critic(sym)
+        actor = self.get_actor(sym)
+        critic = self.get_critic(sym)
 
-            # Guardamos modelo completo con optimizador
-            actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
-            critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
+        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
 
-            actor.save(actor_path, include_optimizer=True)
-            critic.save(critic_path, include_optimizer=True)
+        actor.save(actor_path, include_optimizer=True)
+        critic.save(critic_path, include_optimizer=True)
 
-        print(f"✅ Checkpoint guardado (modelos + optimizadores) en: {dir_path}")
+        print(f"✅ Checkpoint guardado para {sym} (modelo + optimizador) en: {dir_path}")
 
 
-    def load_checkpoint(self, dir_path: str):
-        for sym in self.assets:
-            actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
-            critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+    def load_checkpoint(self, dir_path: str, sym: str):
+        """
+        Carga el checkpoint (actor y critic) para un activo específico.
+        """
+        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
+        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
 
-            if os.path.exists(actor_path) and os.path.exists(critic_path):
-                self.model.set_actor(sym, tf.keras.models.load_model(actor_path, compile=True))
-                self.model.set_critic(sym, tf.keras.models.load_model(critic_path, compile=True))
-                print(f"✅ Checkpoint cargado para {sym}")
-            else:
-                print(f"⚠️ No checkpoint encontrado para {sym}, se usará inicialización.")
+        if os.path.exists(actor_path) and os.path.exists(critic_path):
+            self.model.set_actor(sym, tf.keras.models.load_model(actor_path, compile=True))
+            self.model.set_critic(sym, tf.keras.models.load_model(critic_path, compile=True))
+            print(f"✅ Checkpoint cargado para {sym}")
+        else:
+            print(f"⚠️ No checkpoint encontrado para {sym}, se usará inicialización por defecto.")
 
 
-    def save_weights(self, dir_path: str):
+    def save_weights(self, dir_path: str, sym: str):
+        """
+        Guarda los pesos del actor y critic para un activo específico.
+        """
         os.makedirs(dir_path, exist_ok=True)
-        for asset in self.assets:
-            self.get_actor(asset).save_weights(os.path.join(dir_path, f"actor_{asset}.weights.h5"))
-            self.get_critic(asset).save_weights(os.path.join(dir_path, f"critic_{asset}.weights.h5"))
-        print(f"✅ Pesos guardados por activo en: {dir_path}")
+        actor_path = os.path.join(dir_path, f"actor_{sym}.weights.h5")
+        critic_path = os.path.join(dir_path, f"critic_{sym}.weights.h5")
 
-    def load_weights(self, dir_path: str):
-        for asset in self.assets:
-            actor_w = os.path.join(dir_path, f"actor_{asset}.weights.h5")
-            critic_w = os.path.join(dir_path, f"critic_{asset}.weights.h5")
-            if os.path.exists(actor_w):
-                self.get_actor(asset).load_weights(actor_w)
-            if os.path.exists(critic_w):
-                self.get_critic(asset).load_weights(critic_w)
-        print(f"✅ Pesos cargados desde: {dir_path}")
+        self.get_actor(sym).save_weights(actor_path)
+        self.get_critic(sym).save_weights(critic_path)
+
+        print(f"✅ Pesos guardados para {sym} en: {dir_path}")
+
+
+    def load_weights(self, dir_path: str, sym: str):
+        """
+        Carga los pesos del actor y critic para un activo específico.
+        """
+        actor_w = os.path.join(dir_path, f"actor_{sym}.weights.h5")
+        critic_w = os.path.join(dir_path, f"critic_{sym}.weights.h5")
+
+        if os.path.exists(actor_w):
+            self.get_actor(sym).load_weights(actor_w)
+        else:
+            print(f"⚠️ No se encontró pesos de actor para {sym}")
+
+        if os.path.exists(critic_w):
+            self.get_critic(sym).load_weights(critic_w)
+        else:
+            print(f"⚠️ No se encontró pesos de crítico para {sym}")
+
+        print(f"✅ Pesos cargados para {sym} desde: {dir_path}")
