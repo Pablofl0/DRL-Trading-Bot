@@ -1,25 +1,32 @@
-# Imagen base con soporte GPU
-FROM tensorflow/tensorflow:2.15.0-gpu
+# Usa imagen base de TensorFlow que ya incluye soporte GPU y CPU
+# TensorFlow detectará automáticamente si hay GPU disponible
+FROM tensorflow/tensorflow:2.15.0
 
-# Configuración básica
-ENV PYTHONUNBUFFERED=1
+# Instala dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    git \
+    python3-dev \
+    python3-pip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Define directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements e instalar dependencias
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+# Copia archivos del proyecto
+COPY . .
 
-# Instalar utilidades opcionales
-RUN apt-get update && apt-get install -y git && apt-get clean
+# Actualiza pip, setuptools y wheel usando python3 -m pip
+RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# Copiar todo el proyecto
-COPY . /app
+# Copia el requirements.txt y lo instala usando python3 -m pip
+COPY requirements.txt .
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Crear carpetas por si no existen
-RUN mkdir -p /app/data /app/logs /app/checkpoints
+# Forzar TensorFlow a usar solo CPU
+ENV CUDA_VISIBLE_DEVICES=""
+ENV TF_CPP_MIN_LOG_LEVEL=2
 
-# Exponer puerto para TensorBoard
-EXPOSE 6006
 
-# Comando por defecto (puede cambiarse en docker-compose)
-CMD ["python", "train.py"]
+# Comando por defecto — se puede sobreescribir desde docker-compose
+CMD ["python3", "auto_train.py"]
