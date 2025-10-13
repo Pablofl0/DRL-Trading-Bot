@@ -1,5 +1,4 @@
-version: "3.9"
-
+# El atributo `version` ya no es necesario en Compose V2, pero puedes dejarlo sin problema
 services:
   trading_bot:
     build:
@@ -11,15 +10,10 @@ services:
       - ./models:/app/models
       - ./results:/app/results
     environment:
-      - TF_FORCE_GPU_ALLOW_GROWTH=true
-      - TF_CPP_MIN_LOG_LEVEL=2
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]   # Si hay GPU, se usa automáticamente
+      - CUDA_VISIBLE_DEVICES=""       # Oculta las GPU a TensorFlow
+      - TF_CPP_MIN_LOG_LEVEL=2        # Silencia logs innecesarios
     ports:
-      - "6006:6006"  # (Opcional) puerto TensorBoard interno
+      - "6006:6006"                   # Puerto para TensorBoard interno (opcional)
     command: ["python3", "auto_train.py"]
 
   tensorboard:
@@ -27,7 +21,7 @@ services:
     container_name: tensorboard_drl
     command: tensorboard --logdir=/app/results --host=0.0.0.0
     ports:
-      - "6007:6006"   # Abre TensorBoard en localhost:6007
+      - "6007:6006"                   # Abre TensorBoard en localhost:6007
     volumes:
       - ./results:/app/results
     depends_on:
