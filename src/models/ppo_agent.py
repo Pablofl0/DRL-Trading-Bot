@@ -311,11 +311,12 @@ class PPOAgent:
         actor = self.get_actor(sym)
         critic = self.get_critic(sym)
 
-        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
-        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.h5")
+        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.h5")
 
         actor.save(actor_path, include_optimizer=True)
         critic.save(critic_path, include_optimizer=True)
+
 
         print(f"✅ Checkpoint guardado para {sym} (modelo + optimizador) en: {dir_path}")
 
@@ -324,8 +325,9 @@ class PPOAgent:
         """
         Carga el checkpoint (actor y critic) para un activo específico.
         """
-        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.keras")
-        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.keras")
+        actor_path = os.path.join(dir_path, f"{sym}_actor_checkpoint.h5")
+        critic_path = os.path.join(dir_path, f"{sym}_critic_checkpoint.h5")
+
 
         if os.path.exists(actor_path) and os.path.exists(critic_path):
             self.model.set_actor(sym, tf.keras.models.load_model(actor_path, compile=True))

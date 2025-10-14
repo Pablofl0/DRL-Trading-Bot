@@ -10,11 +10,11 @@ services:
       - ./models:/app/models
       - ./results:/app/results
     environment:
-      - CUDA_VISIBLE_DEVICES=""       # Oculta las GPU a TensorFlow
-      - TF_CPP_MIN_LOG_LEVEL=2        # Silencia logs innecesarios
+      - CUDA_VISIBLE_DEVICES=         # Fuerza TensorFlow a usar solo CPU
+      - TF_CPP_MIN_LOG_LEVEL=2        # Reduce la verbosidad de logs
     ports:
       - "6006:6006"                   # Puerto para TensorBoard interno (opcional)
-    command: ["python3", "auto_train.py"]
+    command: ["sh", "-c", "exec python3 auto_train.py --no-gpu"]
 
   tensorboard:
     image: tensorflow/tensorflow:2.15.0

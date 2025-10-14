@@ -1,5 +1,6 @@
 import os
 import sys
+import signal
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -248,11 +249,33 @@ def train_agent(
     }
     best_reward = {sym: -np.inf for sym in assets}
     
+
+    # ---------------- Función de guardado seguro ----------------
+    def save_on_exit(sig, frame):
+        print(f"\n🛑 Señal {sig} recibida. Guardando checkpoint antes de salir...")
+        try:
+            asset_to_save = locals().get('current_asset', assets[0])
+            agent.set_active_asset(asset_to_save)
+            agent.save_checkpoint(f"models/emergency_checkpoint", asset_to_save)
+            save_training_metrics(train_history[asset_to_save], asset_to_save, locals().get('episode', 0))
+            print("✅ Checkpoint guardado correctamente.")
+        except Exception as e:
+            print(f"⚠️ Error al guardar checkpoint: {e}")
+        finally:
+            sys.exit(0)
+
+    
+
     # =============================================================================
     # Bucle de entrenamiento (Figura 4/5) — Ahora round-robin por activo
     # =============================================================================
     print("Starting training (following flowchart in Figure 4)...")
     try:
+
+        # Captura SIGINT (Ctrl+C) y SIGTERM (docker stop)
+        signal.signal(signal.SIGINT, save_on_exit)
+        signal.signal(signal.SIGTERM, save_on_exit)
+
         for episode in range(start_episode, episodes):
             episode_start_time = datetime.now()
             print(f"Episode {episode+1}/{episodes}")
@@ -421,7 +444,15 @@ def train_agent(
             
             # Asegura flush de stdout (útil en logs)
             sys.stdout.flush()
-            
+
+
+            print("Training UNCOMPLETE. Saving final models and metrics...")
+            for sym in assets:
+                agent.set_active_asset(sym)
+                agent.save_checkpoint(f"models/final_checkpoint",sym)
+                agent.save_weights(f"models/final_weights",sym)
+
+        
     except Exception as e:
         # Manejo general de excepciones con guardado de emergencia
         print(f"Error during training: {e}")

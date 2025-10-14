@@ -2,6 +2,7 @@
 import os
 import sys
 from datetime import date
+import tensorflow as tf
 
 # Asegurar que src esté en path (igual que tu estructura)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -64,18 +65,26 @@ if __name__ == "__main__":
 
     # GPU / mixed precision setup (informational only; actual config handled in train_agent)
     use_gpu = not args.no_gpu
+
     if not use_gpu:
+        # Oculta las GPUs para forzar uso de CPU
+        try:
+            tf.config.set_visible_devices([], 'GPU')
+        except Exception:
+            pass
         print("❌ GPU disabled by user. Running on CPU.")
     else:
         print("🔍 GPU preferred (train_agent will try to configure it).")
 
-    if args.mixed_precision and use_gpu:
+    # Solo activa mixed precision si hay GPU real
+    if args.mixed_precision and use_gpu and tf.config.list_physical_devices('GPU'):
         try:
-            import tensorflow as tf
             tf.keras.mixed_precision.set_global_policy('mixed_float16')
             print("🚀 Mixed precision enabled (global policy set to mixed_float16)")
         except Exception as e:
             print(f"⚠️ Could not enable mixed precision: {e}")
+    else:
+        tf.keras.mixed_precision.set_global_policy('float32')
 
     # Directories
     os.makedirs('models', exist_ok=True)
