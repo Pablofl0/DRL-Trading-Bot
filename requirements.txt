@@ -16,5 +16,8 @@ binance>=0.3
 aiohttp>=3.8.5
 cryptography>=41.0.3
 
+# Configuración (para leer YAML)
+PyYAML>=6.0.0
+
 # Otros útiles (opcional)
 protobuf==3.20.*          # Evita conflictos con TF

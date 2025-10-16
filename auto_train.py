@@ -5,9 +5,22 @@ import time
 import subprocess
 import glob
 import re
+import yaml
 from datetime import datetime, date
 
+# ---------------------------------------------------------------------
+# Función para leer configuración YAML
+# ---------------------------------------------------------------------
+def load_config(config_path="config.yaml"):
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"❌ No se encontró el archivo de configuración: {config_path}")
+    with open(config_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return cfg
+
+# ---------------------------------------------------------------------
 # Busca el último episodio disponible en results/{asset}_training_metrics_ep*.csv
+# ---------------------------------------------------------------------
 def get_latest_episode_for_assets(assets):
     latest = 0
     for sym in assets:
@@ -23,15 +36,24 @@ def get_latest_episode_for_assets(assets):
                     pass
     return latest
 
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
 def main():
-    # -------- Configuración (ajusta según tu caso) --------
-    assets = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']   # <-- lista de activos a entrenar
-    interval = '1h'
-    start_date = '2023-01-01'
-    end_date = date.today().strftime('%Y-%m-%d')
-    episodes = 100
-    save_freq = 1
-    max_restarts = 20
+    # -------- Cargar configuración desde config.yaml --------
+    cfg = load_config("config.yaml")
+
+    assets = cfg.get("assets", ['BTCUSDT'])
+    interval = cfg.get("interval", '1h')
+    start_date = cfg.get("start_date", '2023-01-01')
+    end_date = cfg.get("end_date", "auto")
+    episodes = cfg.get("episodes", 600)
+    save_freq = cfg.get("save_freq", 1)
+    max_restarts = cfg.get("max_restarts", 20)
+    mixed_precision = cfg.get("mixed_precision", False)
+
+    if end_date == "auto":
+        end_date = date.today().strftime('%Y-%m-%d')
 
     # Ruta al script que invoca train_agent
     train_bot_script = os.path.join(os.path.dirname(__file__), 'train_bot.py')
@@ -53,7 +75,7 @@ def main():
         with open(log_file, "a") as f:
             f.write(f"{datetime.now()}: Starting training from episode {current_episode}\n")
 
-        # Monta el comando: pasamos --assets ... y --resume-from current_episode
+        # Monta el comando dinámicamente desde la config
         cmd = [
             sys.executable, train_bot_script,
             "--assets", *assets,
@@ -62,21 +84,23 @@ def main():
             "--end-date", end_date,
             "--episodes", str(episodes),
             "--save-freq", str(save_freq),
-            "--resume-from", str(current_episode),
-            "--mixed-precision"
+            "--resume-from", str(current_episode)
         ]
 
-        print(f"Launching training process (resume {current_episode})...")
+        if mixed_precision:
+            cmd.append("--mixed-precision")
+
+        print(f"🚀 Launching training process (resume {current_episode})...")
         try:
             p = subprocess.Popen(cmd)
             p.wait()
 
             if p.returncode == 0:
-                print("Training process exited normally (code 0).")
+                print("✅ Training process exited normally (code 0).")
                 break
             else:
                 restart_count += 1
-                print(f"Training crashed with return code {p.returncode} — restart {restart_count}/{max_restarts}")
+                print(f"⚠️ Training crashed with return code {p.returncode} — restart {restart_count}/{max_restarts}")
                 with open(log_file, "a") as f:
                     f.write(f"{datetime.now()}: Crash returncode={p.returncode}. Restart {restart_count}\n")
 
@@ -86,23 +110,23 @@ def main():
                 print(f"Will resume from episode {current_episode}")
 
         except KeyboardInterrupt:
-            print("User interrupted auto-train. Exiting.")
+            print("🛑 User interrupted auto-train. Exiting.")
             with open(log_file, "a") as f:
                 f.write(f"{datetime.now()}: Manual interrupt.\n")
             break
         except Exception as e:
             restart_count += 1
-            print(f"Exception while launching training: {e}. Restart {restart_count}/{max_restarts}")
+            print(f"❌ Exception while launching training: {e}. Restart {restart_count}/{max_restarts}")
             with open(log_file, "a") as f:
                 f.write(f"{datetime.now()}: Exception: {e}\n")
             time.sleep(5)
             current_episode = get_latest_episode_for_assets(assets)
 
-    # Report
+    # Report final
     if current_episode >= episodes:
-        print("All episodes finished. Training complete.")
+        print("🎉 All episodes finished. Training complete.")
     elif restart_count >= max_restarts:
-        print("Max restarts reached; stopping auto-resume.")
+        print("🚫 Max restarts reached; stopping auto-resume.")
 
 if __name__ == "__main__":
     main()
