@@ -119,6 +119,19 @@ class CNNLSTMMultiHead:
             raise KeyError(f"No existe critic para activo '{asset}'. Añádelo con add_asset().")
         return self.critic_heads[asset]
 
+    # ---------- Métodos para reasignar modelos cargados ----------
+    def set_actor(self, asset: str, model: tf.keras.Model):
+        """
+        Reemplaza el modelo actor de un activo específico (para reanudar desde checkpoint).
+        """
+        self.actor_heads[asset] = model
+
+    def set_critic(self, asset: str, model: tf.keras.Model):
+        """
+        Reemplaza el modelo crítico de un activo específico (para reanudar desde checkpoint).
+        """
+        self.critic_heads[asset] = model
+
     # Retrocompatibilidad mínima si alguna parte del código espera .actor / .critic
     # Puedes fijarlas a un activo por defecto (p. ej., el primero) o levantar error explícito.
     @property
