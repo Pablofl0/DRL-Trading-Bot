@@ -15,6 +15,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Train the cryptocurrency trading bot (multi-activo)')
     # Mantengo --symbol para retrocompatibilidad; --assets permite lista multi-activo
+    parser.add_argument('--asset_group', type=str, default='Crypto',
+                        help='Asset group.')
     parser.add_argument('--symbol', type=str, default='BTCUSDT',
                         help='Single trading pair symbol (retrocompatible).')
     parser.add_argument('--assets', nargs='+', type=str, default=['BTCUSDT', 'ETHUSDT', 'SOLUSDT'],
@@ -93,6 +95,7 @@ if __name__ == "__main__":
 
     # Print configuration summary
     print(f"\n📈 Launching training")
+    print(f"  - Asset group: {args.asset_group}")
     print(f"  - symbol (single): {args.symbol}")
     print(f"  - assets (multi): {args.assets}")
     print(f"  - interval: {args.interval}, start: {args.start_date}, end: {args.end_date}")
@@ -104,6 +107,7 @@ if __name__ == "__main__":
 
     # Call train_agent forwarding both 'symbol' and 'assets' (train_agent handles None assets)
     train_agent(
+        asset_group=args.asset_group,
         symbol=args.symbol,
         interval=args.interval,
         start_date=args.start_date,

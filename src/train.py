@@ -67,6 +67,7 @@ os.makedirs('results', exist_ok=True)
 # ENTRENAMIENTO PPO con MULTI-HEAD/MULTI-ACTIVO (retrocompatible)
 # =============================================================================
 def train_agent(
+    asset_group='Crypto',
     symbol='BTCUSDT',
     interval='1h',
     start_date='2020-01-01',
@@ -210,7 +211,7 @@ def train_agent(
             else:
                 # Multi-activo: intentamos cargar latest por cada activo
                 for sym in assets:
-                    checkpoint_dir = f'models/final_checkpoint'
+                    checkpoint_dir = f'models/{asset_group}/final_checkpoint'
                     if os.path.exists(checkpoint_dir):
                         try:
                             agent.set_active_asset(sym)
@@ -218,7 +219,7 @@ def train_agent(
                             print(f"[resume] Loaded checkpoint for {sym}")
                         except Exception as e:
                             print(f"[resume] Could not load checkpoint for {sym}: {e}")
-                    elif os.path.exists(f'models/emergency_checkpoint'):
+                    elif os.path.exists(f'models/{asset_group}/emergency_checkpoint'):
                         try:
                             agent.set_active_asset(sym)
                             agent.load_checkpoint(checkpoint_dir,sym)
@@ -256,7 +257,7 @@ def train_agent(
         try:
             asset_to_save = locals().get('current_asset', assets[0])
             agent.set_active_asset(asset_to_save)
-            agent.save_checkpoint(f"models/emergency_checkpoint", asset_to_save)
+            agent.save_checkpoint(f"models/{asset_group}/emergency_checkpoint", asset_to_save)
             save_training_metrics(train_history[asset_to_save], asset_to_save, locals().get('episode', 0))
             print("✅ Checkpoint guardado correctamente.")
         except Exception as e:
@@ -397,7 +398,7 @@ def train_agent(
             # ---------------- Guardado "best" por activo ----------------
             if episode_reward > best_reward[current_asset]:
                 best_reward[current_asset] = episode_reward
-                agent.save_weights(f"models/best_weights",current_asset)
+                agent.save_weights(f"models/{asset_group}/best_weights",current_asset)
                 print(f"Episode {episode+1}: New best model saved for {current_asset} with reward {episode_reward:.2f}")
             
             # ---------------- Logs de tiempo y métricas ----------------
@@ -425,7 +426,7 @@ def train_agent(
                             print(f"Warning: Could not delete {temp_file}: {e}")
             
             # ---------------- Guardado "latest" por activo ----------------
-            agent.save_weights(f"models/latest_weights",current_asset)
+            agent.save_weights(f"models/{asset_group}/latest_weights",current_asset)
 
             
             # ---------------- ETA estimada ----------------
@@ -449,8 +450,8 @@ def train_agent(
             print("Training UNCOMPLETE. Saving final models and metrics...")
             for sym in assets:
                 agent.set_active_asset(sym)
-                agent.save_checkpoint(f"models/final_checkpoint",sym)
-                agent.save_weights(f"models/final_weights",sym)
+                agent.save_checkpoint(f"models/{asset_group}/final_checkpoint",sym)
+                agent.save_weights(f"models/{asset_group}/final_weights",sym)
 
         
     except Exception as e:
@@ -461,7 +462,7 @@ def train_agent(
             # Usa el activo actual si existe, si no el primero
             asset_to_save = locals().get('current_asset', assets[0])
             agent.set_active_asset(asset_to_save)
-            agent.save_checkpoint(f"models/emergency_checkpoint",asset_to_save)
+            agent.save_checkpoint(f"models/{asset_group}/emergency_checkpoint",asset_to_save)
 
             save_training_metrics(train_history[asset_to_save], asset_to_save, locals().get('episode', 0))
             print("Emergency save completed. You can resume from this episode.")
@@ -475,8 +476,8 @@ def train_agent(
     print("Training complete. Saving final models and metrics...")
     for sym in assets:
         agent.set_active_asset(sym)
-        agent.save_checkpoint(f"models/final_checkpoint",sym)
-        agent.save_weights(f"models/final_weights",sym)
+        agent.save_checkpoint(f"models/{asset_group}/final_checkpoint",sym)
+        agent.save_weights(f"models/{asset_group}/final_weights",sym)
 
         save_training_metrics(train_history[sym], sym, episodes)
         plot_training_results(train_history[sym], sym)

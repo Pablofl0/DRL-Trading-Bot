@@ -43,6 +43,7 @@ def main():
     # -------- Cargar configuración desde config.yaml --------
     cfg = load_config("config.yaml")
 
+    asset_group = cfg.get("asset_group", 'Crypto')
     assets = cfg.get("assets", ['BTCUSDT'])
     interval = cfg.get("interval", '1h')
     start_date = cfg.get("start_date", '2023-01-01')
@@ -78,6 +79,7 @@ def main():
         # Monta el comando dinámicamente desde la config
         cmd = [
             sys.executable, train_bot_script,
+            "--asset_group", asset_group,
             "--assets", *assets,
             "--interval", interval,
             "--start-date", start_date,
